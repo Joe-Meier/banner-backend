@@ -10,17 +10,25 @@ const stripe = Stripe(env.STRIPE_SECRET_KEY);
 const mailer = env.EMAIL_USER && env.EMAIL_PASS
   ? nodemailer.createTransport({ service: 'gmail', auth: { user: env.EMAIL_USER, pass: env.EMAIL_PASS } })
   : null;
-const store = env.GITHUB_TOKEN && env.ORDERS_REPO
-  ? githubStore({ token: env.GITHUB_TOKEN, ordersRepo: env.ORDERS_REPO, siteRepo: env.SITE_REPO || 'Joe-Meier/Joecool', siteBranch: env.SITE_BRANCH || 'main' })
+const ordersRepo = env.ORDERS_REPO || 'Joe-Meier/banner-orders';
+const store = env.GITHUB_TOKEN
+  ? githubStore({ token: env.GITHUB_TOKEN, ordersRepo, siteRepo: env.SITE_REPO || 'Joe-Meier/Joecool', siteBranch: env.SITE_BRANCH || 'main' })
   : memoryStore();
 
-if (!(config.pricePerBlock > 0)) console.warn('PRICE_PER_BLOCK is not set, so checkout is closed.');
-if (!config.webhookSecret) console.warn('STRIPE_WEBHOOK_SECRET is not set, so paid orders never show up for approval.');
+// On a real server, orders kept in memory would be lost and approved ads would never reach the site,
+// so checkout stays closed until the server can keep them.
+const hosted = Boolean(env.RAILWAY_ENVIRONMENT || env.RENDER);
+if (!env.STRIPE_SECRET_KEY) { config.pricePerBlock = 0; console.warn('STRIPE_SECRET_KEY is not set, so checkout is closed.'); }
+if (!env.GITHUB_TOKEN) console.warn(`GITHUB_TOKEN is not set, so orders only live in memory and approved ads never reach the site${hosted ? '. Checkout is closed until it is set.' : '.'}`);
+if (hosted && !env.GITHUB_TOKEN) config.pricePerBlock = 0;
+if (!(config.pricePerBlock > 0)) console.warn('Checkout is closed.');
 if (!config.adminPassword) console.warn('ADMIN_PASSWORD is not set, so the /admin page is locked.');
-if (!(env.GITHUB_TOKEN && env.ORDERS_REPO)) console.warn('GITHUB_TOKEN / ORDERS_REPO are not set, so orders only live in memory and approved ads never reach the site.');
 if (!mailer) console.warn('EMAIL_USER / EMAIL_PASS are not set, so sale emails only go to the log.');
 
 const PORT = env.PORT || 3000;
-createApp({ stripe, mailer, store, config }).listen(PORT, () => {
-  console.log(`🚀 Banner backend running on port ${PORT}`);
+const app = createApp({ stripe, mailer, store, config });
+app.listen(PORT, () => {
+  console.log(`🚀 Banner backend running on port ${PORT}. Orders: ${env.GITHUB_TOKEN ? ordersRepo : 'in memory'}. Price: ${config.pricePerBlock > 0 ? config.pricePerBlock : 'closed'}.`);
 });
+// Checks Stripe for finished checkouts every two minutes, in case a buyer closed the tab before coming back.
+if (env.STRIPE_SECRET_KEY) setInterval(() => app.syncPayments(), 2 * 60 * 1000).unref();

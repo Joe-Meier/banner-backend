@@ -8,10 +8,18 @@ const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJA
 const quiet = { info() {}, warn() {}, error() {} };
 
 function setup(env = {}) {
-  const created = [], sent = [], refunds = [];
+  const created = [], sent = [], refunds = [], sessions = new Map();
   let n = 0;
   const stripe = {
-    checkout: { sessions: { create: async (params) => { created.push(params); n++; return { id: `cs_test_${n}`, url: `https://checkout.stripe.com/c/pay/cs_test_${n}` }; } } },
+    checkout: { sessions: {
+      create: async (params) => {
+        created.push(params); n++;
+        const s = { id: `cs_test_${n}`, url: `https://checkout.stripe.com/c/pay/cs_test_${n}`, status: 'open', payment_status: 'unpaid', metadata: params.metadata, currency: 'usd' };
+        sessions.set(s.id, s);
+        return s;
+      },
+      retrieve: async (id) => { if (!sessions.has(id)) throw new Error('No such checkout.session'); return { ...sessions.get(id) }; }
+    } },
     refunds: { create: async (params) => { refunds.push(params); return { id: 're_1' }; } },
     webhooks: {
       constructEvent: (body, sig) => {
@@ -25,7 +33,9 @@ function setup(env = {}) {
   const config = readConfig({ PRICE_PER_BLOCK: '3', STRIPE_WEBHOOK_SECRET: 'whsec_x', EMAIL_USER: 'jo@example.com', ADMIN_PASSWORD: 'hunter2', PUBLIC_URL: 'https://banner.test', ...env });
   const server = createApp({ stripe, mailer, store, config, log: quiet }).listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
-  return { created, sent, refunds, store, server, base };
+  // What happens on Stripe's side when the buyer pays, without telling the server.
+  const pay = (id) => Object.assign(sessions.get(id), { status: 'complete', payment_status: 'paid', amount_total: 4500, payment_intent: 'pi_456' });
+  return { created, sent, refunds, store, server, base, pay };
 }
 const order = (over = {}) => ({
   customer: { name: 'Ada', email: 'ada@example.com', company: 'Acme', url: 'https://acme.test' },
@@ -57,7 +67,7 @@ test('the server sets the price and keeps the ad, whatever the browser says it c
   const li = t.created[0].line_items[0];
   assert.equal(li.quantity, 15);
   assert.equal(li.price_data.unit_amount, 300);
-  assert.equal(t.created[0].success_url, 'https://joe-meier.github.io/Joecool/?banner=paid#banner');
+  assert.equal(t.created[0].success_url, 'https://joe-meier.github.io/Joecool/?banner=paid&session_id={CHECKOUT_SESSION_ID}#banner');
   const [saved] = await t.store.listOrders();
   assert.equal(saved.status, 'unpaid');
   assert.equal(saved.id, t.created[0].metadata.order_id);
@@ -77,7 +87,7 @@ test('spots off the banner, bad emails and missing images are turned away', asyn
 });
 
 test('checkout is closed when no price is set', async () => {
-  const t = setup({ PRICE_PER_BLOCK: '' });
+  const t = setup({ PRICE_PER_BLOCK: '0' });
   const res = await post(t.base, '/create-checkout-session', order());
   const cfg = await (await fetch(t.base + '/config')).json();
   t.server.close();
@@ -102,6 +112,28 @@ test('a paid order waits for jo, and jo gets an email with the ad and a link to 
   assert.match(t.sent[0].subject, /5 × 3 for 45\.00 USD/);
   assert.match(t.sent[0].text, /https:\/\/banner\.test\/admin/);
   assert.equal(t.sent[0].attachments[0].contentType, 'image/png');
+});
+
+test('without the webhook, the server asks Stripe itself: when the buyer comes back, and when jo opens the page', async () => {
+  const t = setup({ STRIPE_WEBHOOK_SECRET: '' });
+  await post(t.base, '/create-checkout-session', order());
+  await post(t.base, '/create-checkout-session', order({ selection: { x: 30, y: 5, width: 2, height: 2 } }));
+  const [a, b] = t.created.map((c) => c.metadata.order_id);
+  t.pay('cs_test_1');
+  const back = await post(t.base, '/confirm', { sessionId: 'cs_test_1' });
+  const junk = await post(t.base, '/confirm', { sessionId: '../etc' });
+  assert.deepEqual([back.status, junk.status], [200, 400]);
+  assert.equal((await t.store.getOrder(a)).status, 'paid');
+  assert.equal((await t.store.getOrder(a)).paymentIntent, 'pi_456');
+  assert.equal(t.sent.length, 1);
+
+  t.pay('cs_test_2'); // this buyer closed the tab instead of coming back
+  const list = await (await fetch(t.base + '/admin/api/orders', { headers: JO })).json();
+  await post(t.base, '/confirm', { sessionId: 'cs_test_1' });
+  t.server.close();
+  assert.deepEqual(list.orders.map((o) => o.status).sort(), ['paid', 'paid']);
+  assert.equal((await t.store.getOrder(b)).status, 'paid');
+  assert.equal(t.sent.length, 2, 'one email per sale');
 });
 
 test('nobody can buy a spot that is taken or waiting for approval', async () => {

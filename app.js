@@ -11,12 +11,12 @@ function readConfig(env) {
   return {
     siteUrl,
     allowedOrigins: (env.ALLOWED_ORIGINS || new URL(siteUrl).origin).split(',').map((s) => s.trim()).filter(Boolean),
-    pricePerBlock: Number(env.PRICE_PER_BLOCK), // dollars per square
+    pricePerBlock: Number(env.PRICE_PER_BLOCK ?? 1.5), // dollars per square; 0 closes checkout
     currency: (env.CURRENCY || 'usd').toLowerCase(),
     cols: Number(env.BANNER_COLS || 64),
     rows: Number(env.BANNER_ROWS || 20),
     termMonths: Number(env.TERM_MONTHS || 6),
-    webhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
+    webhookSecret: env.STRIPE_WEBHOOK_SECRET || '', // optional: the server also asks Stripe itself
     notifyEmail: env.NOTIFY_EMAIL || env.EMAIL_USER || '',
     adminPassword: env.ADMIN_PASSWORD || '',
     publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || (env.RAILWAY_PUBLIC_DOMAIN ? `https://${env.RAILWAY_PUBLIC_DOMAIN}` : '')).replace(/\/+$/, '')
@@ -76,7 +76,64 @@ function createApp({ stripe, mailer, store, config, log = console }) {
     return [...ads.map(adSpot), ...orders.filter((o) => o.status === 'paid').map((o) => o.spot)];
   }
 
-  // Stripe's webhook needs the raw body to check its signature, so it comes before express.json().
+  // A checkout was paid: the order waits for jo, and jo gets an email with the ad.
+  const marking = new Set();
+  async function markPaid(id, session) {
+    if (marking.has(id)) return;
+    marking.add(id);
+    try {
+      const before = await store.getOrder(id);
+      if (!before) {
+        log.error(`Paid checkout ${session.id} has no order ${id}`);
+        await notify('Banner spot paid, but the order is missing', `Stripe checkout session ${session.id} was paid, but order ${id} isn't in the orders repo. Check Stripe for the buyer.`);
+        return;
+      }
+      if (before.status !== 'unpaid' && before.status !== 'expired') return;
+      const order = await store.updateOrder(id, {
+        status: 'paid', paidAt: new Date().toISOString(), paymentIntent: session.payment_intent,
+        paid: session.amount_total / 100, sessionId: session.id
+      });
+      const image = await store.getImage(order).catch(() => null);
+      const amount = money(order.paid, session.currency || config.currency);
+      await notify(`Banner spot sold: ${order.spot.width} × ${order.spot.height} for ${amount}. Approve it?`, [
+        `Someone bought a spot on your banner: ${spotLabel(order.spot)}.`,
+        `Paid: ${amount}`,
+        `Buyer: ${order.customer.name} <${order.customer.email}>`,
+        order.customer.company ? `Company: ${order.customer.company}` : null,
+        order.customer.url ? `Link: ${order.customer.url}` : null,
+        '',
+        `Their ad is attached. Approve it (it goes straight up on the banner) or refund it here: ${config.publicUrl ? config.publicUrl + '/admin' : '/admin on your server'}`
+      ].filter((l) => l !== null).join('\n'), image ? [{ filename: `ad-${order.id}.${image.ext}`, content: image.content, contentType: image.contentType }] : []).catch((err) => log.error('Could not send the sale email:', err.message));
+    } finally {
+      marking.delete(id);
+    }
+  }
+  async function settle(session) {
+    const id = session.metadata && session.metadata.order_id;
+    if (!id) return;
+    if (session.payment_status === 'paid') return markPaid(id, session);
+    if (session.status === 'expired') {
+      const order = await store.getOrder(id);
+      if (order && order.status === 'unpaid') await store.updateOrder(id, { status: 'expired' });
+    }
+  }
+
+  // No webhook needed: the server asks Stripe about its open checkouts itself. It does this every couple of minutes,
+  // when someone comes back from paying, before a new checkout, and when jo opens the admin page.
+  let syncing = null;
+  function syncPayments() {
+    if (syncing) return syncing;
+    syncing = (async () => {
+      const since = Date.now() - 48 * 3600 * 1000;
+      const open = (await store.listOrders()).filter((o) => o.status === 'unpaid' && o.sessionId && Date.parse(o.createdAt) > since);
+      for (const o of open) {
+        try { await settle(await stripe.checkout.sessions.retrieve(o.sessionId)); } catch (err) { log.warn(`Couldn't check checkout ${o.sessionId}:`, err.message); }
+      }
+    })().catch((err) => log.error('Payment check failed:', err.message)).finally(() => { syncing = null; });
+    return syncing;
+  }
+
+  // Stripe's webhook (optional) needs the raw body to check its signature, so it comes before express.json().
   app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     if (!config.webhookSecret) return res.status(503).send('Webhook secret not set');
     let event;
@@ -87,33 +144,7 @@ function createApp({ stripe, mailer, store, config, log = console }) {
       return res.status(400).send('Bad signature');
     }
     try {
-      const session = event.data.object, id = session.metadata && session.metadata.order_id;
-      if (event.type === 'checkout.session.completed' && session.payment_status === 'paid' && id) {
-        const before = await store.getOrder(id);
-        if (!before) {
-          log.error(`Paid checkout ${session.id} has no order ${id}`);
-          await notify('Banner spot paid, but the order is missing', `Stripe checkout session ${session.id} was paid, but order ${id} isn't in the orders repo. Check Stripe for the buyer.`);
-        } else if (before.status === 'unpaid' || before.status === 'expired') {
-          const order = await store.updateOrder(id, {
-            status: 'paid', paidAt: new Date().toISOString(), paymentIntent: session.payment_intent,
-            paid: session.amount_total / 100, sessionId: session.id
-          });
-          const image = await store.getImage(order).catch(() => null);
-          const amount = money(order.paid, session.currency || config.currency);
-          await notify(`Banner spot sold: ${order.spot.width} × ${order.spot.height} for ${amount}. Approve it?`, [
-            `Someone bought a spot on your banner: ${spotLabel(order.spot)}.`,
-            `Paid: ${amount}`,
-            `Buyer: ${order.customer.name} <${order.customer.email}>`,
-            order.customer.company ? `Company: ${order.customer.company}` : null,
-            order.customer.url ? `Link: ${order.customer.url}` : null,
-            '',
-            `Their ad is attached. Approve it (it goes straight up on the banner) or refund it here: ${config.publicUrl ? config.publicUrl + '/admin' : '/admin on your server'}`
-          ].filter((l) => l !== null).join('\n'), image ? [{ filename: `ad-${order.id}.${image.ext}`, content: image.content, contentType: image.contentType }] : []).catch((err) => log.error('Could not send the sale email:', err.message));
-        }
-      } else if (event.type === 'checkout.session.expired' && id) {
-        const order = await store.getOrder(id);
-        if (order && order.status === 'unpaid') await store.updateOrder(id, { status: 'expired' });
-      }
+      if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') await settle(event.data.object);
     } catch (err) {
       log.error('Webhook handling failed:', err.message);
       return res.status(500).send('Try again'); // Stripe retries
@@ -132,6 +163,7 @@ function createApp({ stripe, mailer, store, config, log = console }) {
     if (valid.error) return res.status(400).json({ error: valid.error });
     const { customer, spot, image } = valid;
     try {
+      await syncPayments();
       if ((await takenSpots()).some((s) => overlaps(s, spot))) {
         return res.status(409).json({ error: 'Someone already has part of that spot. Pick another one.' });
       }
@@ -159,7 +191,7 @@ function createApp({ stripe, mailer, store, config, log = console }) {
         }],
         customer_email: customer.email,
         metadata: { order_id: order.id, spot: `${spot.x},${spot.y},${spot.width}x${spot.height}` },
-        success_url: `${config.siteUrl}${sep}banner=paid#banner`,
+        success_url: `${config.siteUrl}${sep}banner=paid&session_id={CHECKOUT_SESSION_ID}#banner`,
         cancel_url: `${config.siteUrl}${sep}banner=cancelled#banner`
       });
       await store.updateOrder(order.id, { sessionId: session.id }).catch(() => {});
@@ -167,6 +199,20 @@ function createApp({ stripe, mailer, store, config, log = console }) {
     } catch (err) {
       log.error('Error creating checkout session:', err.message);
       res.status(500).json({ error: 'Checkout is having a moment. Please try again.' });
+    }
+  });
+
+  // The site calls this when a buyer comes back from paying, so jo hears about it straight away.
+  site.post('/confirm', async (req, res) => {
+    const sessionId = req.body && req.body.sessionId;
+    if (typeof sessionId !== 'string' || !/^cs_[A-Za-z0-9_]{1,200}$/.test(sessionId)) return res.status(400).json({ error: 'No checkout.' });
+    try {
+      const session = await stripe.checkout.sessions.retrieve(sessionId);
+      await settle(session);
+      res.json({ paid: session.payment_status === 'paid' });
+    } catch (err) {
+      log.warn('Confirm failed:', err.message);
+      res.status(404).json({ error: 'No such checkout.' });
     }
   });
 
@@ -203,6 +249,7 @@ function createApp({ stripe, mailer, store, config, log = console }) {
   admin.get('/', (req, res) => { res.set('Cache-Control', 'no-store').type('html').send(ADMIN_HTML); });
   admin.get('/api/orders', async (req, res) => {
     try {
+      await syncPayments();
       const [orders, ads] = await Promise.all([store.listOrders(), store.listAds()]);
       orders.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
       res.set('Cache-Control', 'no-store').json({ orders, ads, banner: { cols: config.cols, rows: config.rows, termMonths: config.termMonths, currency: config.currency, pricePerBlock: config.pricePerBlock || null } });
@@ -258,6 +305,7 @@ function createApp({ stripe, mailer, store, config, log = console }) {
   }));
   app.use('/admin', admin);
 
+  app.syncPayments = syncPayments;
   return app;
 }
 
