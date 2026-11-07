@@ -13,8 +13,8 @@ function readConfig(env) {
     allowedOrigins: (env.ALLOWED_ORIGINS || new URL(siteUrl).origin).split(',').map((s) => s.trim()).filter(Boolean),
     pricePerBlock: Number(env.PRICE_PER_BLOCK), // dollars per square
     currency: (env.CURRENCY || 'usd').toLowerCase(),
-    cols: Number(env.BANNER_COLS || 32),
-    rows: Number(env.BANNER_ROWS || 10),
+    cols: Number(env.BANNER_COLS || 64),
+    rows: Number(env.BANNER_ROWS || 20),
     termMonths: Number(env.TERM_MONTHS || 6),
     webhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
     notifyEmail: env.NOTIFY_EMAIL || env.EMAIL_USER || '',

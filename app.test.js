@@ -67,8 +67,8 @@ test('the server sets the price and keeps the ad, whatever the browser says it c
 
 test('spots off the banner, bad emails and missing images are turned away', async () => {
   const t = setup();
-  const off = await post(t.base, '/create-checkout-session', order({ selection: { x: 30, y: 0, width: 5, height: 1 } }));
-  const low = await post(t.base, '/create-checkout-session', order({ selection: { x: 0, y: 8, width: 2, height: 3 } }));
+  const off = await post(t.base, '/create-checkout-session', order({ selection: { x: 62, y: 0, width: 5, height: 1 } }));
+  const low = await post(t.base, '/create-checkout-session', order({ selection: { x: 0, y: 18, width: 2, height: 3 } }));
   const email = await post(t.base, '/create-checkout-session', order({ customer: { name: 'Ada', email: 'nope' } }));
   const img = await post(t.base, '/create-checkout-session', order({ image: 'data:text/html;base64,PGgxPg==' }));
   t.server.close();
@@ -83,7 +83,7 @@ test('checkout is closed when no price is set', async () => {
   t.server.close();
   assert.equal(res.status, 503);
   assert.equal(cfg.pricePerBlock, null);
-  assert.equal(cfg.rows, 10);
+  assert.equal(cfg.rows, 20);
 });
 
 test('a paid order waits for jo, and jo gets an email with the ad and a link to approve it', async () => {

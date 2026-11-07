@@ -33,7 +33,7 @@ Orders and their images are kept in a private GitHub repo, because Render's free
 | `SITE_URL` | Where buyers come back to. Defaults to `https://joe-meier.github.io/Joecool/`. |
 | `EMAIL_USER`, `EMAIL_PASS` | A Gmail address and an [app password](https://myaccount.google.com/apppasswords) for it, used to email you each sale. |
 | `NOTIFY_EMAIL` | Where sale emails go. Defaults to `EMAIL_USER`. |
-| `BANNER_COLS`, `BANNER_ROWS`, `TERM_MONTHS`, `CURRENCY` | Optional. Default to 32, 10, 6 and `usd`, matching the site. |
+| `BANNER_COLS`, `BANNER_ROWS`, `TERM_MONTHS`, `CURRENCY` | Optional. Default to 64, 20, 6 and `usd`, matching the site. |
 
 ## Setting it up
 
