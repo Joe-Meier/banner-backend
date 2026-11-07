@@ -1,5 +1,5 @@
 # One-click setup on Render's free plan:
-# https://render.com/deploy?repo=https://github.com/Joe-Meier/banner-backend
+# https://render.com/deploy?repo=https://github.com/Joe-Meier/banner-backend/tree/site-checkout
 # Render asks for the values marked sync: false when you create it.
 services:
   - type: web
