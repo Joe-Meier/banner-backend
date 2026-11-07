@@ -25,7 +25,7 @@ Orders and their images are kept in a private GitHub repo, because Render's free
 |---|---|
 | `STRIPE_SECRET_KEY` | From Stripe › Developers › API keys. Use the `sk_test_...` key until you've tried a test purchase. |
 | `STRIPE_WEBHOOK_SECRET` | The `whsec_...` signing secret from the webhook you add below. |
-| `PRICE_PER_BLOCK` | Dollars per square, like `3`. Checkout stays closed until this is set. |
+| `PRICE_PER_BLOCK` | Dollars per square, like `1.50`. Checkout stays closed until this is set. |
 | `ADMIN_PASSWORD` | The password for `/admin`. Your browser asks for it; any username works. |
 | `GITHUB_TOKEN` | A fine-grained token that can read and write the contents of the orders repo and the site repo (see below). |
 | `ORDERS_REPO` | The private repo orders are kept in, like `Joe-Meier/banner-orders`. |
