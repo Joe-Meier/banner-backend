@@ -1,15 +1,13 @@
 require('dotenv').config();
 const Stripe = require('stripe');
-const nodemailer = require('nodemailer');
 const { createApp, readConfig } = require('./app');
 const { memoryStore, githubStore } = require('./store');
+const { makeMailer } = require('./mailer');
 
 const env = process.env;
 const config = readConfig(env);
 const stripe = Stripe(env.STRIPE_SECRET_KEY);
-const mailer = env.EMAIL_USER && env.EMAIL_PASS
-  ? nodemailer.createTransport({ service: 'gmail', auth: { user: env.EMAIL_USER, pass: env.EMAIL_PASS } })
-  : null;
+const mailer = makeMailer(env);
 const ordersRepo = env.ORDERS_REPO || 'Joe-Meier/banner-orders';
 const store = env.GITHUB_TOKEN
   ? githubStore({ token: env.GITHUB_TOKEN, ordersRepo, siteRepo: env.SITE_REPO || 'Joe-Meier/Joecool', siteBranch: env.SITE_BRANCH || 'main' })
@@ -23,7 +21,9 @@ if (!env.GITHUB_TOKEN) console.warn(`GITHUB_TOKEN is not set, so orders only liv
 if (hosted && !env.GITHUB_TOKEN) config.pricePerBlock = 0;
 if (!(config.pricePerBlock > 0)) console.warn('Checkout is closed.');
 if (!config.adminPassword) console.warn('ADMIN_PASSWORD is not set, so the /admin page is locked.');
-if (!mailer) console.warn('EMAIL_USER / EMAIL_PASS are not set, so sale emails only go to the log.');
+if (!mailer) console.warn('No email set up (RESEND_API_KEY, or EMAIL_USER and EMAIL_PASS), so sale emails only go to the log.');
+if (env.RENDER && !env.RESEND_API_KEY && mailer) console.warn("Render's free plan blocks Gmail's SMTP ports, so sale emails won't send. Set RESEND_API_KEY.");
+if (mailer && !config.notifyEmail) console.warn('Set NOTIFY_EMAIL (or EMAIL_USER) so sale emails know where to go.');
 
 const PORT = env.PORT || 3000;
 const app = createApp({ stripe, mailer, store, config });

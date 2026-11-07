@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { createApp, readConfig } = require('./app');
 const { memoryStore, githubStore } = require('./store');
+const { resendMailer } = require('./mailer');
 
 // A 1×1 PNG, as the site would send it.
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -235,4 +236,18 @@ test('the GitHub store keeps orders in the private repo and puts approved ads in
   await store.removeAd('abc');
   assert.deepEqual(await store.listAds(), []);
   assert.ok(!gh.files.has('jo/Joecool:banner/abc.png'));
+});
+
+test('on Render, sale emails go through Resend with the ad attached', async () => {
+  const calls = [];
+  const mailer = resendMailer({ apiKey: 're_123', fetch: async (url, opts) => { calls.push({ url, opts }); return new Response('{"id":"e1"}', { status: 200 }); } });
+  await mailer.sendMail({ to: 'jo@example.com', subject: 'Banner spot sold', text: 'hi', attachments: [{ filename: 'ad.png', content: Buffer.from('png-bytes'), contentType: 'image/png' }] });
+  assert.equal(calls[0].url, 'https://api.resend.com/emails');
+  assert.equal(calls[0].opts.headers.authorization, 'Bearer re_123');
+  const body = JSON.parse(calls[0].opts.body);
+  assert.deepEqual(body.to, ['jo@example.com']);
+  assert.equal(body.from, 'Banner <onboarding@resend.dev>');
+  assert.equal(Buffer.from(body.attachments[0].content, 'base64').toString(), 'png-bytes');
+  const failing = resendMailer({ apiKey: 'x', fetch: async () => new Response('nope', { status: 403 }) });
+  await assert.rejects(failing.sendMail({ to: 'a@b.c', subject: 's', text: 't' }), /Resend said 403/);
 });
