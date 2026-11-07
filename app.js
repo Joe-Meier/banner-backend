@@ -6,11 +6,14 @@ const cors = require('cors');
 
 // The banner is a grid of squares. Buyers pick a rectangle of squares and upload their ad; the server, not the
 // browser, sets the price. After they pay, jo approves the ad on /admin and it goes up on the banner.
+const SITE_ORIGINS = ['https://joemeier.cool', 'https://www.joemeier.cool', 'https://joe-meier.github.io'];
+
 function readConfig(env) {
   const siteUrl = env.SITE_URL || 'https://joe-meier.github.io/Joecool/';
   return {
     siteUrl,
-    allowedOrigins: (env.ALLOWED_ORIGINS || new URL(siteUrl).origin).split(',').map((s) => s.trim()).filter(Boolean),
+    // The site lives on joemeier.cool now, and GitHub's own address still works, so checkout takes both.
+    allowedOrigins: [...new Set((env.ALLOWED_ORIGINS || [new URL(siteUrl).origin, ...SITE_ORIGINS].join(',')).split(',').map((s) => s.trim()).filter(Boolean))],
     pricePerBlock: Number(env.PRICE_PER_BLOCK ?? 1.5), // dollars per square; 0 closes checkout
     currency: (env.CURRENCY || 'usd').toLowerCase(),
     // A strip down the right side of the site: 10 squares across, 250 down.

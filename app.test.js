@@ -253,3 +253,11 @@ test('on Render, sale emails go through Resend with the ad attached', async () =
   const failing = resendMailer({ apiKey: 'x', fetch: async () => new Response('nope', { status: 403 }) });
   await assert.rejects(failing.sendMail({ to: 'a@b.c', subject: 's', text: 't' }), /Resend said 403/);
 });
+
+test('checkout answers the site on joemeier.cool and on GitHub, and nobody else', async () => {
+  const t = setup();
+  const ask = (origin) => fetch(t.base + '/config', { headers: { Origin: origin } }).then((r) => r.headers.get('access-control-allow-origin'));
+  const [custom, www, github, other] = await Promise.all(['https://joemeier.cool', 'https://www.joemeier.cool', 'https://joe-meier.github.io', 'https://evil.test'].map(ask));
+  t.server.close();
+  assert.deepEqual([custom, www, github, other], ['https://joemeier.cool', 'https://www.joemeier.cool', 'https://joe-meier.github.io', null]);
+});
