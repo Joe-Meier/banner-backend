@@ -1,19 +1,25 @@
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
-// The banner is a grid of blocks. Buyers pick a rectangle of blocks; the server, not the browser, sets the price.
+// The banner is a grid of squares. Buyers pick a rectangle of squares and upload their ad; the server, not the
+// browser, sets the price. After they pay, jo approves the ad on /admin and it goes up on the banner.
 function readConfig(env) {
   const siteUrl = env.SITE_URL || 'https://joe-meier.github.io/Joecool/';
   return {
     siteUrl,
     allowedOrigins: (env.ALLOWED_ORIGINS || new URL(siteUrl).origin).split(',').map((s) => s.trim()).filter(Boolean),
-    pricePerBlock: Number(env.PRICE_PER_BLOCK), // dollars
+    pricePerBlock: Number(env.PRICE_PER_BLOCK), // dollars per square
     currency: (env.CURRENCY || 'usd').toLowerCase(),
     cols: Number(env.BANNER_COLS || 32),
-    rows: Number(env.BANNER_ROWS || 8),
+    rows: Number(env.BANNER_ROWS || 10),
     termMonths: Number(env.TERM_MONTHS || 6),
     webhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
-    notifyEmail: env.NOTIFY_EMAIL || env.EMAIL_USER || ''
+    notifyEmail: env.NOTIFY_EMAIL || env.EMAIL_USER || '',
+    adminPassword: env.ADMIN_PASSWORD || '',
+    publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '')
   };
 }
 
@@ -21,6 +27,8 @@ const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'we
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const isInt = (v) => Number.isInteger(v);
 const clean = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+const adSpot = (ad) => ({ x: ad.x, y: ad.y, width: ad.w, height: ad.h });
 
 function parseImage(dataUrl) {
   const m = /^data:(image\/[a-z]+);base64,([A-Za-z0-9+/=]+)$/.exec(typeof dataUrl === 'string' ? dataUrl : '');
@@ -47,16 +55,26 @@ function validateOrder(body, config) {
   }
   const image = parseImage(body.image);
   if (!image) return { error: 'Please add your ad as a PNG, JPG, WebP or GIF under 4 MB.' };
-  const blocks = width * height;
-  return { customer: { name, email, company, url }, spot: { x, y, width, height, blocks }, image };
+  return { customer: { name, email, company, url }, spot: { x, y, width, height, blocks: width * height }, image };
 }
 
-const spotLabel = (s) => `${s.width} × ${s.height} block${s.blocks === 1 ? '' : 's'}, starting ${s.x + 1} across, ${s.y + 1} down`;
+const spotLabel = (s) => `${s.width} × ${s.height} square${s.blocks === 1 ? '' : 's'}, starting ${s.x + 1} across, ${s.y + 1} down`;
+const money = (n, currency) => `${Number(n).toFixed(2)} ${String(currency).toUpperCase()}`;
+const ADMIN_HTML = fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8');
 
-function createApp({ stripe, mailer, config, log = console }) {
+function createApp({ stripe, mailer, store, config, log = console }) {
   const app = express();
-  // Ad images wait here between checkout and payment, so they can go out with the "paid" email.
-  const pending = new Map();
+
+  async function notify(subject, text, attachments = []) {
+    if (!mailer || !config.notifyEmail) { log.info(`[email skipped] ${subject}\n${text}`); return; }
+    await mailer.sendMail({ from: config.notifyEmail, to: config.notifyEmail, subject, text, attachments });
+  }
+
+  // Spots that are spoken for: what's up on the banner, plus ads that are paid for and waiting on jo.
+  async function takenSpots() {
+    const [ads, orders] = await Promise.all([store.listAds(), store.listOrders()]);
+    return [...ads.map(adSpot), ...orders.filter((o) => o.status === 'paid').map((o) => o.spot)];
+  }
 
   // Stripe's webhook needs the raw body to check its signature, so it comes before express.json().
   app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
@@ -68,49 +86,63 @@ function createApp({ stripe, mailer, config, log = console }) {
       log.warn('Webhook signature check failed:', err.message);
       return res.status(400).send('Bad signature');
     }
-    if (event.type === 'checkout.session.completed' && event.data.object.payment_status === 'paid') {
-      const session = event.data.object, md = session.metadata || {};
-      const order = pending.get(session.id);
-      pending.delete(session.id);
-      const spot = { x: +md.spot_x, y: +md.spot_y, width: +md.spot_width, height: +md.spot_height, blocks: +md.spot_blocks };
-      const amount = `${(session.amount_total / 100).toFixed(2)} ${String(session.currency).toUpperCase()}`;
-      const lines = [
-        `Someone bought a spot on your banner: ${spotLabel(spot)}.`,
-        `Paid: ${amount}`,
-        `Buyer: ${md.customer_name} <${session.customer_details?.email || session.customer_email || ''}>`,
-        md.customer_company ? `Company: ${md.customer_company}` : null,
-        md.customer_url ? `Link: ${md.customer_url}` : null,
-        `Stripe checkout session: ${session.id}`,
-        '',
-        order ? 'Their ad is attached.' : "The server restarted before payment came through, so the ad image is missing. Ask them to email it to you.",
-        '',
-        'To put it up, add this to BANNER.sold in index.html (and save the image in a banner/ folder next to it):',
-        `{ x: ${spot.x}, y: ${spot.y}, w: ${spot.width}, h: ${spot.height}, image: "banner/${session.id.slice(-8)}.${order ? order.image.ext : 'png'}", url: "${md.customer_url || ''}", name: "${(md.customer_company || md.customer_name || '').replace(/"/g, "'")}" }`
-      ].filter((l) => l !== null);
-      try {
-        await notify(`Banner spot sold: ${spot.width} × ${spot.height} for ${amount}`, lines.join('\n'),
-          order ? [{ filename: `${session.id.slice(-8)}.${order.image.ext}`, content: order.image.content, contentType: order.image.contentType }] : []);
-      } catch (err) {
-        log.error('Could not send the sale email:', err.message);
+    try {
+      const session = event.data.object, id = session.metadata && session.metadata.order_id;
+      if (event.type === 'checkout.session.completed' && session.payment_status === 'paid' && id) {
+        const before = await store.getOrder(id);
+        if (!before) {
+          log.error(`Paid checkout ${session.id} has no order ${id}`);
+          await notify('Banner spot paid, but the order is missing', `Stripe checkout session ${session.id} was paid, but order ${id} isn't in the orders repo. Check Stripe for the buyer.`);
+        } else if (before.status === 'unpaid' || before.status === 'expired') {
+          const order = await store.updateOrder(id, {
+            status: 'paid', paidAt: new Date().toISOString(), paymentIntent: session.payment_intent,
+            paid: session.amount_total / 100, sessionId: session.id
+          });
+          const image = await store.getImage(order).catch(() => null);
+          const amount = money(order.paid, session.currency || config.currency);
+          await notify(`Banner spot sold: ${order.spot.width} × ${order.spot.height} for ${amount}. Approve it?`, [
+            `Someone bought a spot on your banner: ${spotLabel(order.spot)}.`,
+            `Paid: ${amount}`,
+            `Buyer: ${order.customer.name} <${order.customer.email}>`,
+            order.customer.company ? `Company: ${order.customer.company}` : null,
+            order.customer.url ? `Link: ${order.customer.url}` : null,
+            '',
+            `Their ad is attached. Approve it (it goes straight up on the banner) or refund it here: ${config.publicUrl ? config.publicUrl + '/admin' : '/admin on your server'}`
+          ].filter((l) => l !== null).join('\n'), image ? [{ filename: `ad-${order.id}.${image.ext}`, content: image.content, contentType: image.contentType }] : []).catch((err) => log.error('Could not send the sale email:', err.message));
+        }
+      } else if (event.type === 'checkout.session.expired' && id) {
+        const order = await store.getOrder(id);
+        if (order && order.status === 'unpaid') await store.updateOrder(id, { status: 'expired' });
       }
+    } catch (err) {
+      log.error('Webhook handling failed:', err.message);
+      return res.status(500).send('Try again'); // Stripe retries
     }
     res.json({ received: true });
   });
 
-  app.use(cors({ origin: config.allowedOrigins }));
-  app.use(express.json({ limit: '6mb' }));
+  /* ---------- What the site talks to ---------- */
+  const site = express.Router();
+  site.use(cors({ origin: config.allowedOrigins }));
+  site.use(express.json({ limit: '6mb' }));
 
-  async function notify(subject, text, attachments) {
-    if (!mailer || !config.notifyEmail) { log.info(`[email skipped] ${subject}\n${text}`); return; }
-    await mailer.sendMail({ from: config.notifyEmail, to: config.notifyEmail, subject, text, attachments });
-  }
-
-  app.post('/create-checkout-session', async (req, res) => {
+  site.post('/create-checkout-session', async (req, res) => {
     if (!(config.pricePerBlock > 0)) return res.status(503).json({ error: 'Sales are closed right now.' });
-    const order = validateOrder(req.body, config);
-    if (order.error) return res.status(400).json({ error: order.error });
-    const { customer, spot } = order;
+    const valid = validateOrder(req.body, config);
+    if (valid.error) return res.status(400).json({ error: valid.error });
+    const { customer, spot, image } = valid;
     try {
+      if ((await takenSpots()).some((s) => overlaps(s, spot))) {
+        return res.status(409).json({ error: 'Someone already has part of that spot. Pick another one.' });
+      }
+      const order = {
+        id: crypto.randomBytes(5).toString('hex'), status: 'unpaid', createdAt: new Date().toISOString(),
+        customer, spot, total: spot.blocks * config.pricePerBlock, currency: config.currency,
+        termMonths: config.termMonths, image: { ext: image.ext, contentType: image.contentType }
+      };
+      // The ad is saved before they pay, so it's there for jo whenever the payment comes through.
+      await store.putImage(order, image);
+      await store.saveOrder(order);
       const sep = config.siteUrl.includes('?') ? '&' : '?';
       const session = await stripe.checkout.sessions.create({
         mode: 'payment',
@@ -126,21 +158,12 @@ function createApp({ stripe, mailer, config, log = console }) {
           }
         }],
         customer_email: customer.email,
-        metadata: {
-          customer_name: customer.name,
-          customer_company: customer.company,
-          customer_url: customer.url,
-          spot_x: String(spot.x), spot_y: String(spot.y),
-          spot_width: String(spot.width), spot_height: String(spot.height),
-          spot_blocks: String(spot.blocks)
-        },
+        metadata: { order_id: order.id, spot: `${spot.x},${spot.y},${spot.width}x${spot.height}` },
         success_url: `${config.siteUrl}${sep}banner=paid#banner`,
         cancel_url: `${config.siteUrl}${sep}banner=cancelled#banner`
       });
-      pending.set(session.id, { image: order.image, at: Date.now() });
-      // Forget images for checkouts nobody finished after a day.
-      for (const [id, p] of pending) if (Date.now() - p.at > 864e5) pending.delete(id);
-      res.json({ url: session.url, total: spot.blocks * config.pricePerBlock, currency: config.currency });
+      await store.updateOrder(order.id, { sessionId: session.id }).catch(() => {});
+      res.json({ url: session.url, total: order.total, currency: config.currency });
     } catch (err) {
       log.error('Error creating checkout session:', err.message);
       res.status(500).json({ error: 'Checkout is having a moment. Please try again.' });
@@ -148,15 +171,94 @@ function createApp({ stripe, mailer, config, log = console }) {
   });
 
   // The site asks this for the live price, so the number on the page always matches what Stripe charges.
-  app.get('/config', (req, res) => {
+  site.get('/config', (req, res) => {
     res.json({ pricePerBlock: config.pricePerBlock > 0 ? config.pricePerBlock : null, currency: config.currency, cols: config.cols, rows: config.rows, termMonths: config.termMonths });
   });
 
-  app.get('/health', (req, res) => {
+  site.get('/health', (req, res) => {
     res.json({ status: 'OK', message: 'Banner backend is running!' });
   });
+  app.use(site);
+
+  /* ---------- jo's admin page: approve, refund, take down ---------- */
+  const safeEqual = (a, b) => {
+    const x = crypto.createHash('sha256').update(String(a)).digest(), y = crypto.createHash('sha256').update(String(b)).digest();
+    return crypto.timingSafeEqual(x, y);
+  };
+  function adminOnly(req, res, next) {
+    if (!config.adminPassword) return res.status(503).send('Set ADMIN_PASSWORD on the server to use this page.');
+    const [scheme, encoded] = (req.headers.authorization || '').split(' ');
+    const pass = scheme === 'Basic' && encoded ? Buffer.from(encoded, 'base64').toString('utf8').split(':').slice(1).join(':') : '';
+    if (pass && safeEqual(pass, config.adminPassword)) return next();
+    res.set('WWW-Authenticate', 'Basic realm="Banner admin", charset="UTF-8"').status(401).send('This page is just for jo.');
+  }
+  // Buttons on the page send this header. Other sites can't, so they can't press the buttons for you.
+  function fromAdminPage(req, res, next) {
+    if (req.get('x-banner-admin') !== '1') return res.status(403).json({ error: 'Use the admin page.' });
+    next();
+  }
+
+  const admin = express.Router();
+  admin.use(adminOnly);
+  admin.get('/', (req, res) => { res.set('Cache-Control', 'no-store').type('html').send(ADMIN_HTML); });
+  admin.get('/api/orders', async (req, res) => {
+    try {
+      const [orders, ads] = await Promise.all([store.listOrders(), store.listAds()]);
+      orders.sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      res.set('Cache-Control', 'no-store').json({ orders, ads, banner: { cols: config.cols, rows: config.rows, termMonths: config.termMonths, currency: config.currency, pricePerBlock: config.pricePerBlock || null } });
+    } catch (err) {
+      log.error('Could not load orders:', err.message);
+      res.status(500).json({ error: `Couldn't load the orders: ${err.message}` });
+    }
+  });
+  admin.get('/api/orders/:id/image', async (req, res) => {
+    try {
+      const order = await store.getOrder(req.params.id);
+      const image = order && await store.getImage(order);
+      if (!image) return res.status(404).send('No image');
+      res.set('Cache-Control', 'private, max-age=86400').type(image.contentType).send(image.content);
+    } catch (err) {
+      res.status(500).send(err.message);
+    }
+  });
+
+  async function act(req, res, wanted, run) {
+    try {
+      const order = await store.getOrder(req.params.id);
+      if (!order) return res.status(404).json({ error: 'No such order.' });
+      if (order.status !== wanted) return res.status(409).json({ error: `That order is ${order.status}, so it can't do that.` });
+      res.json({ order: await run(order) });
+    } catch (err) {
+      log.error(`Admin action on ${req.params.id} failed:`, err.message);
+      res.status(500).json({ error: err.message });
+    }
+  }
+  admin.post('/api/orders/:id/approve', fromAdminPage, (req, res) => act(req, res, 'paid', async (order) => {
+    const ads = await store.listAds();
+    if (ads.some((ad) => overlaps(adSpot(ad), order.spot))) throw new Error('Another ad is already up in part of that spot.');
+    const image = await store.getImage(order);
+    if (!image) throw new Error("Couldn't find this order's image.");
+    const now = new Date(), until = new Date(now);
+    until.setMonth(until.getMonth() + (order.termMonths || config.termMonths));
+    const ad = {
+      id: order.id, x: order.spot.x, y: order.spot.y, w: order.spot.width, h: order.spot.height,
+      image: `banner/${order.id}.${order.image.ext}`, url: order.customer.url || '', name: order.customer.company || order.customer.name,
+      until: until.toISOString().slice(0, 10)
+    };
+    await store.publishAd(ad, image);
+    return store.updateOrder(order.id, { status: 'live', approvedAt: now.toISOString(), until: ad.until });
+  }));
+  admin.post('/api/orders/:id/reject', fromAdminPage, (req, res) => act(req, res, 'paid', async (order) => {
+    if (order.paymentIntent) await stripe.refunds.create({ payment_intent: order.paymentIntent });
+    return store.updateOrder(order.id, { status: 'refunded', refundedAt: new Date().toISOString() });
+  }));
+  admin.post('/api/orders/:id/remove', fromAdminPage, (req, res) => act(req, res, 'live', async (order) => {
+    await store.removeAd(order.id);
+    return store.updateOrder(order.id, { status: 'removed', removedAt: new Date().toISOString() });
+  }));
+  app.use('/admin', admin);
 
   return app;
 }
 
-module.exports = { createApp, readConfig, validateOrder };
+module.exports = { createApp, readConfig, validateOrder, overlaps };

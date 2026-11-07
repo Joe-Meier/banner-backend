@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Banner orders</title>
+<style>
+:root {
+  --ink: #0d0d0d; --grey: #6d6d6d; --line: #e4e4e0; --paper: #fff; --page: #f4f4f1;
+  --yellow: #ffd400; --blue: #0d99ff; --green: #00a862; --red: #e5341b;
+  --font: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 15px/1.4 var(--ui); }
+main { width: min(1100px, calc(100% - 32px)); margin: 0 auto; padding: 40px 0 80px; display: grid; gap: 44px; }
+h1 { margin: 0; font: 700 clamp(36px, 6vw, 64px)/.9 var(--font); letter-spacing: -0.05em; }
+h2 { margin: 0 0 14px; font: 700 24px/1 var(--font); letter-spacing: -0.03em; }
+h2 small { font: 500 14px var(--ui); color: var(--grey); letter-spacing: 0; }
+header p { margin: 10px 0 0; color: var(--grey); }
+.bn { position: relative; aspect-ratio: var(--cols) / var(--rows); background: var(--yellow); overflow: hidden; }
+.bn::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(to right, rgba(13, 13, 13, .1) 1px, transparent 1px), linear-gradient(to bottom, rgba(13, 13, 13, .1) 1px, transparent 1px);
+  background-size: calc(100% / var(--cols)) calc(100% / var(--rows));
+}
+.bn img, .bn .box { position: absolute; width: 100%; height: 100%; object-fit: cover; }
+.bn .slot { position: absolute; }
+.bn .slot.other { opacity: .35; }
+.bn .slot.this { outline: 2px solid var(--blue); outline-offset: 1px; z-index: 1; }
+.bn .slot.this::after { content: ""; position: absolute; inset: 0; box-shadow: 0 0 0 9999px rgba(255, 255, 255, .35); }
+.list { display: grid; gap: 16px; }
+.order { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 22px; padding: 18px; background: var(--paper); border-radius: 10px; }
+@media (max-width: 760px) { .order { grid-template-columns: 1fr; } }
+.order h3 { margin: 0 0 8px; font: 700 22px/1.05 var(--font); letter-spacing: -0.03em; overflow-wrap: anywhere; }
+.order dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 14px; }
+.order dt { color: var(--grey); }
+.order dd { margin: 0; overflow-wrap: anywhere; }
+.order a { color: inherit; }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+button {
+  all: unset; cursor: pointer; box-sizing: border-box; padding: 11px 16px; border-radius: 999px;
+  background: var(--ink); color: #fff; font: 700 15px/1 var(--font); letter-spacing: -0.01em;
+}
+button.ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px currentColor; }
+button.bad { color: var(--red); }
+button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+button[disabled] { opacity: .45; cursor: default; }
+.msg { margin: 12px 0 0; font-weight: 600; }
+.msg.err { color: var(--red); }
+.msg.ok { color: var(--green); }
+.tag { display: inline-block; padding: 3px 8px; border-radius: 999px; background: var(--line); font: 600 12px/1.2 var(--ui); }
+.empty { margin: 0; padding: 18px; border: 1.5px dashed #cfcfca; border-radius: 10px; color: var(--grey); }
+details summary { cursor: pointer; font: 700 18px/1 var(--font); letter-spacing: -0.02em; }
+details[open] summary { margin-bottom: 14px; }
+.fail { padding: 18px; border-radius: 10px; background: #ffe9e5; color: var(--red); font-weight: 600; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Banner orders</h1>
+    <p id="sum">Loading…</p>
+  </header>
+  <section>
+    <h2>The banner right now</h2>
+    <div class="bn" id="now"></div>
+  </section>
+  <section>
+    <h2>Waiting for you <small id="n-paid"></small></h2>
+    <div class="list" id="paid"></div>
+  </section>
+  <section>
+    <h2>Up on the banner</h2>
+    <div class="list" id="live"></div>
+  </section>
+  <details>
+    <summary>Started, never paid</summary>
+    <div class="list" id="unpaid"></div>
+  </details>
+  <details>
+    <summary>Refunded or taken down</summary>
+    <div class="list" id="done"></div>
+  </details>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+let data = null;
+
+const money = (n) => (n == null ? "?" : Number(n).toLocaleString("en-US", { style: "currency", currency: (data.banner.currency || "usd").toUpperCase() }));
+const when = (iso) => (iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
+const imgFor = (id) => `/admin/api/orders/${encodeURIComponent(id)}/image`;
+const pos = (s) => {
+  const { cols, rows } = data.banner;
+  return `left:${(100 * s.x) / cols}%;top:${(100 * s.y) / rows}%;width:${(100 * s.width) / cols}%;height:${(100 * s.height) / rows}%`;
+};
+const adSpot = (a) => ({ x: a.x, y: a.y, width: a.w, height: a.h });
+
+// A little banner: what's up now, faded, with this order's ad in its spot.
+function banner(order) {
+  const others = data.ads.filter((a) => !order || a.id !== order.id)
+    .map((a) => `<div class="slot ${order ? "other" : ""}" style="${pos(adSpot(a))}"><img src="${imgFor(a.id)}" alt="${esc(a.name)}" onerror="this.remove()"></div>`).join("");
+  const mine = order ? `<div class="slot this" style="${pos(order.spot)}"><img src="${imgFor(order.id)}" alt="Their ad"></div>` : "";
+  return others + mine;
+}
+
+function card(o) {
+  const c = o.customer, s = o.spot;
+  const rows = [
+    ["Spot", `${s.width} × ${s.height} squares, starting ${s.x + 1} across and ${s.y + 1} down`],
+    [o.paid != null ? "Paid" : "Total", `${money(o.paid ?? o.total)}${o.paidAt ? `, ${when(o.paidAt)}` : ""}`],
+    ["Buyer", `${esc(c.name)} · <a href="mailto:${esc(c.email)}">${esc(c.email)}</a>`],
+    c.company ? ["Company", esc(c.company)] : null,
+    ["Links to", c.url ? `<a href="${esc(c.url)}" target="_blank" rel="noopener noreferrer">${esc(c.url)}</a>` : "Nowhere, just the image"],
+    o.until ? ["Up until", esc(o.until)] : ["Runs for", `${o.termMonths || data.banner.termMonths} months once approved`]
+  ].filter(Boolean).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("");
+  const buttons = {
+    paid: `<button type="button" data-act="approve">Approve and put it up</button><button type="button" class="ghost bad" data-act="reject">Refund it</button>`,
+    live: `<button type="button" class="ghost bad" data-act="remove">Take it down</button>`
+  }[o.status] || `<span class="tag">${esc(o.status)}${o.createdAt ? ` · started ${when(o.createdAt)}` : ""}</span>`;
+  return `<article class="order" data-id="${esc(o.id)}">
+    <div class="bn" style="--cols:${data.banner.cols};--rows:${data.banner.rows}">${banner(o)}</div>
+    <div>
+      <h3>${esc(c.company || c.name)}</h3>
+      <dl>${rows}</dl>
+      <div class="actions">${buttons}</div>
+      <p class="msg" hidden></p>
+    </div>
+  </article>`;
+}
+
+function fill(sel, list, empty) {
+  $(sel).innerHTML = list.length ? list.map(card).join("") : `<p class="empty">${empty}</p>`;
+}
+
+async function load() {
+  const res = await fetch("/admin/api/orders", { cache: "no-store" });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) { $("#sum").innerHTML = `<span class="fail">${esc(json.error || `Couldn't load the orders (${res.status}).`)}</span>`; return; }
+  data = json;
+  const { cols, rows, pricePerBlock, termMonths } = data.banner;
+  const by = (st) => data.orders.filter((o) => st.includes(o.status));
+  const live = by(["live"]), paid = by(["paid"]);
+  const sold = data.ads.reduce((n, a) => n + a.w * a.h, 0);
+  $("#sum").textContent = `${sold} of ${cols * rows} squares sold. ${pricePerBlock ? `${money(pricePerBlock)} a square, ` : ""}${termMonths} months each.`;
+  $("#n-paid").textContent = paid.length ? `${paid.length} to look at` : "";
+  const now = $("#now");
+  now.style.setProperty("--cols", cols);
+  now.style.setProperty("--rows", rows);
+  now.innerHTML = banner(null);
+  fill("#paid", paid, "Nothing to approve. When someone pays, their ad shows up here and you get an email.");
+  fill("#live", live, "No ads up yet.");
+  fill("#unpaid", by(["unpaid", "expired"]), "None.");
+  fill("#done", by(["refunded", "removed"]), "None.");
+}
+
+const ASK = {
+  reject: "Refund this order? They get all their money back and the ad doesn't go up.",
+  remove: "Take this ad down? It comes off the banner. This doesn't refund them."
+};
+const DONE = {
+  approve: "Approved. It's on the banner now; the live site catches up in a minute or two.",
+  reject: "Refunded.",
+  remove: "Taken down."
+};
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-act]");
+  if (!b) return;
+  const act = b.dataset.act, el = b.closest(".order"), msg = el.querySelector(".msg");
+  if (ASK[act] && !confirm(ASK[act])) return;
+  el.querySelectorAll("button").forEach((x) => { x.disabled = true; });
+  msg.hidden = false; msg.className = "msg"; msg.textContent = act === "approve" ? "Putting it up…" : "Working on it…";
+  try {
+    const res = await fetch(`/admin/api/orders/${encodeURIComponent(el.dataset.id)}/${act}`, { method: "POST", headers: { "x-banner-admin": "1" } });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || `That didn't work (${res.status}).`);
+    msg.className = "msg ok"; msg.textContent = DONE[act];
+    setTimeout(load, 1600);
+  } catch (err) {
+    msg.className = "msg err"; msg.textContent = err.message;
+    el.querySelectorAll("button").forEach((x) => { x.disabled = false; });
+  }
+});
+load();
+</script>
+</body>
+</html>
