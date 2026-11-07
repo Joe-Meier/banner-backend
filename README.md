@@ -39,8 +39,10 @@ Orders and their images are kept in a private GitHub repo, because the server's 
 
 1. On GitHub, make a new **private** repo called `banner-orders` (empty is fine): https://github.com/new?name=banner-orders&visibility=private
 2. On GitHub, go to Settings › Developer settings › Fine-grained tokens and make a token with access to just `banner-orders` and `Joecool`, with **Contents: Read and write**. That's `GITHUB_TOKEN`.
-3. This runs on Railway (the banner-backend service), which redeploys whenever `main` changes. Under the service's Variables, add `GITHUB_TOKEN` and `ADMIN_PASSWORD`, and check `STRIPE_SECRET_KEY`, `EMAIL_USER` and `EMAIL_PASS` are there. Starting fresh: Railway › New › Deploy from GitHub repo, pick this repo, and it runs `npm start` on its own. Render works too (New › Web Service, start command `npm start`).
-4. Put the service's public address (Railway › Settings › Networking) into `BANNER.checkoutApi` in the site's index.html.
+3. Click https://render.com/deploy?repo=https://github.com/Joe-Meier/banner-backend, sign in with GitHub, and fill in the five values it asks for: `STRIPE_SECRET_KEY`, `GITHUB_TOKEN`, `ADMIN_PASSWORD`, `EMAIL_USER` and `EMAIL_PASS`. It sets up a free web service from `render.yaml` and redeploys whenever `main` changes. (Railway works too: add the same values under the service's Variables.)
+4. Put the service's address (`https://<name>.onrender.com`) into `BANNER.checkoutApi` in the site's index.html.
+
+Render's free plan sleeps after 15 minutes with no visitors and takes about a minute to wake up. The site wakes it as soon as someone opens the page (it asks the server for the price), and nothing is lost while it sleeps: orders live in GitHub, payments in Stripe, and the server catches up with Stripe when it wakes.
 
 On Railway or Render, checkout stays closed until `STRIPE_SECRET_KEY` and `GITHUB_TOKEN` are set, so nobody can pay for an ad that would have nowhere to go.
 

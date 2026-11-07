@@ -1,0 +1,22 @@
+# One-click setup on Render's free plan:
+# https://render.com/deploy?repo=https://github.com/Joe-Meier/banner-backend
+# Render asks for the values marked sync: false when you create it.
+services:
+  - type: web
+    name: joe-meier-banner
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
