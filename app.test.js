@@ -95,6 +95,7 @@ test('checkout is closed when no price is set', async () => {
   assert.equal(res.status, 503);
   assert.equal(cfg.pricePerBlock, null);
   assert.equal(cfg.rows, 20);
+  assert.equal(cfg.termMonths, 3);
 });
 
 test('a paid order waits for jo, and jo gets an email with the ad and a link to approve it', async () => {

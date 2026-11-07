@@ -15,7 +15,7 @@ function readConfig(env) {
     currency: (env.CURRENCY || 'usd').toLowerCase(),
     cols: Number(env.BANNER_COLS || 64),
     rows: Number(env.BANNER_ROWS || 20),
-    termMonths: Number(env.TERM_MONTHS || 6),
+    termMonths: Number(env.TERM_MONTHS || 3),
     webhookSecret: env.STRIPE_WEBHOOK_SECRET || '', // optional: the server also asks Stripe itself
     notifyEmail: env.NOTIFY_EMAIL || env.EMAIL_USER || '',
     adminPassword: env.ADMIN_PASSWORD || '',
