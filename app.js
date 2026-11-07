@@ -19,7 +19,7 @@ function readConfig(env) {
     webhookSecret: env.STRIPE_WEBHOOK_SECRET || '',
     notifyEmail: env.NOTIFY_EMAIL || env.EMAIL_USER || '',
     adminPassword: env.ADMIN_PASSWORD || '',
-    publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || '').replace(/\/+$/, '')
+    publicUrl: (env.PUBLIC_URL || env.RENDER_EXTERNAL_URL || (env.RAILWAY_PUBLIC_DOMAIN ? `https://${env.RAILWAY_PUBLIC_DOMAIN}` : '')).replace(/\/+$/, '')
   };
 }
 

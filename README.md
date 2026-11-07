@@ -9,7 +9,7 @@ How it works:
 3. You get an email, and the order shows up on your admin page at `https://<your-server>/admin`.
 4. You hit **Approve and put it up**, and the server commits the ad into the site's repo (`banner/ads.json` plus the image). GitHub Pages redeploys and it's on the banner a minute or two later. Or hit **Refund it** and Stripe refunds them in full.
 
-Orders and their images are kept in a private GitHub repo, because Render's free plan forgets everything on disk each time the server goes to sleep.
+Orders and their images are kept in a private GitHub repo, because the server's disk is wiped every time it redeploys.
 
 ## Endpoints
 
@@ -39,12 +39,12 @@ Orders and their images are kept in a private GitHub repo, because Render's free
 
 1. On GitHub, make a new **private** repo called `banner-orders` (empty is fine).
 2. On GitHub, go to Settings › Developer settings › Fine-grained tokens and make a token with access to just `banner-orders` and `Joecool`, with **Contents: Read and write**. That's `GITHUB_TOKEN`.
-3. On render.com, choose New › Web Service and pick this repo. Build command `npm install`, start command `npm start`.
-4. Add the settings above under Environment.
-5. In Stripe › Developers › Webhooks, add an endpoint at `https://<your-service>.onrender.com/webhook` for the `checkout.session.completed` and `checkout.session.expired` events, then copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
-6. Put `https://<your-service>.onrender.com` into `BANNER.checkoutApi` in the site's index.html.
+3. This runs on Railway (the banner-backend service), which redeploys whenever `main` changes. Starting fresh: Railway › New › Deploy from GitHub repo, pick this repo, and it runs `npm start` on its own. Render works too (New › Web Service, start command `npm start`).
+4. Add the settings above under the service's Variables.
+5. In Stripe › Developers › Webhooks, add an endpoint at `https://<your-service>.up.railway.app/webhook` for the `checkout.session.completed` and `checkout.session.expired` events, then copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
+6. Put `https://<your-service>.up.railway.app` into `BANNER.checkoutApi` in the site's index.html.
 
-The free plan sleeps when nobody's using it, so the first checkout (or admin page visit) after a quiet spell takes up to a minute to start. Approved ads don't wait on it: they're plain files in the site's repo.
+Approved ads don't depend on the server staying up: they're plain files in the site's repo.
 
 ## Running it locally
 
