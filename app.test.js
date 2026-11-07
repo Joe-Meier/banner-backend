@@ -78,8 +78,8 @@ test('the server sets the price and keeps the ad, whatever the browser says it c
 
 test('spots off the banner, bad emails and missing images are turned away', async () => {
   const t = setup();
-  const off = await post(t.base, '/create-checkout-session', order({ selection: { x: 62, y: 0, width: 5, height: 1 } }));
-  const low = await post(t.base, '/create-checkout-session', order({ selection: { x: 0, y: 18, width: 2, height: 3 } }));
+  const off = await post(t.base, '/create-checkout-session', order({ selection: { x: 8, y: 0, width: 5, height: 1 } }));
+  const low = await post(t.base, '/create-checkout-session', order({ selection: { x: 0, y: 248, width: 2, height: 3 } }));
   const email = await post(t.base, '/create-checkout-session', order({ customer: { name: 'Ada', email: 'nope' } }));
   const img = await post(t.base, '/create-checkout-session', order({ image: 'data:text/html;base64,PGgxPg==' }));
   t.server.close();
@@ -94,7 +94,8 @@ test('checkout is closed when no price is set', async () => {
   t.server.close();
   assert.equal(res.status, 503);
   assert.equal(cfg.pricePerBlock, null);
-  assert.equal(cfg.rows, 20);
+  assert.equal(cfg.cols, 10);
+  assert.equal(cfg.rows, 250);
   assert.equal(cfg.termMonths, 3);
 });
 
@@ -119,7 +120,7 @@ test('a paid order waits for jo, and jo gets an email with the ad and a link to 
 test('without the webhook, the server asks Stripe itself: when the buyer comes back, and when jo opens the page', async () => {
   const t = setup({ STRIPE_WEBHOOK_SECRET: '' });
   await post(t.base, '/create-checkout-session', order());
-  await post(t.base, '/create-checkout-session', order({ selection: { x: 30, y: 5, width: 2, height: 2 } }));
+  await post(t.base, '/create-checkout-session', order({ selection: { x: 0, y: 30, width: 2, height: 2 } }));
   const [a, b] = t.created.map((c) => c.metadata.order_id);
   t.pay('cs_test_1');
   const back = await post(t.base, '/confirm', { sessionId: 'cs_test_1' });
@@ -142,7 +143,7 @@ test('nobody can buy a spot that is taken or waiting for approval', async () => 
   const t = setup();
   await buy(t);
   const overlap = await post(t.base, '/create-checkout-session', order({ selection: { x: 6, y: 3, width: 4, height: 2 } }));
-  const beside = await post(t.base, '/create-checkout-session', order({ selection: { x: 7, y: 1, width: 4, height: 2 } }));
+  const beside = await post(t.base, '/create-checkout-session', order({ selection: { x: 7, y: 1, width: 3, height: 2 } }));
   t.server.close();
   assert.equal(overlap.status, 409);
   assert.equal(beside.status, 200);
@@ -166,7 +167,7 @@ test('the admin page is just for jo', async () => {
 test('approving puts the ad on the banner; refunding and taking down work too', async () => {
   const t = setup();
   const first = await buy(t);
-  const second = await buy(t, order({ selection: { x: 20, y: 0, width: 2, height: 2 } }));
+  const second = await buy(t, order({ selection: { x: 0, y: 20, width: 2, height: 2 } }));
 
   const list = await (await fetch(t.base + '/admin/api/orders', { headers: JO })).json();
   assert.deepEqual(list.orders.map((o) => o.status), ['paid', 'paid']);

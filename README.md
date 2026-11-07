@@ -34,7 +34,7 @@ Orders and their images are kept in a private GitHub repo, because the server's 
 | `RESEND_API_KEY` | For sale emails on Render, whose free plan blocks Gmail's SMTP. Sign up free at resend.com with the address in `NOTIFY_EMAIL`/`EMAIL_USER` and make an API key. Emails come from `onboarding@resend.dev` unless you set `EMAIL_FROM` on a domain you've verified there. |
 | `EMAIL_USER`, `EMAIL_PASS` | A Gmail address and an [app password](https://myaccount.google.com/apppasswords) for it, used to email you each sale when `RESEND_API_KEY` isn't set, on hosts that allow SMTP. |
 | `NOTIFY_EMAIL` | Where sale emails go. Defaults to `EMAIL_USER`. |
-| `BANNER_COLS`, `BANNER_ROWS`, `TERM_MONTHS`, `CURRENCY` | Optional. Default to 64, 20, 3 and `usd`, matching the site. |
+| `BANNER_COLS`, `BANNER_ROWS`, `TERM_MONTHS`, `CURRENCY` | Optional. Default to 10, 250, 3 and `usd`, matching the site's strip down the right side. |
 
 ## Setting it up
 

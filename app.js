@@ -13,8 +13,9 @@ function readConfig(env) {
     allowedOrigins: (env.ALLOWED_ORIGINS || new URL(siteUrl).origin).split(',').map((s) => s.trim()).filter(Boolean),
     pricePerBlock: Number(env.PRICE_PER_BLOCK ?? 1.5), // dollars per square; 0 closes checkout
     currency: (env.CURRENCY || 'usd').toLowerCase(),
-    cols: Number(env.BANNER_COLS || 64),
-    rows: Number(env.BANNER_ROWS || 20),
+    // A strip down the right side of the site: 10 squares across, 250 down.
+    cols: Number(env.BANNER_COLS || 10),
+    rows: Number(env.BANNER_ROWS || 250),
     termMonths: Number(env.TERM_MONTHS || 3),
     webhookSecret: env.STRIPE_WEBHOOK_SECRET || '', // optional: the server also asks Stripe itself
     notifyEmail: env.NOTIFY_EMAIL || env.EMAIL_USER || '',

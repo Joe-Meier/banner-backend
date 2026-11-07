@@ -27,11 +27,14 @@ header p { margin: 10px 0 0; color: var(--grey); }
 }
 .bn img, .bn .box { position: absolute; width: 100%; height: 100%; object-fit: cover; }
 .bn .slot { position: absolute; }
+/* The banner is a tall strip: the whole thing scrolls in its own box, and each order shows the part around its spot. */
+.strip { width: min(100%, 200px); max-height: 70vh; overflow-y: auto; overscroll-behavior: contain; }
+.order .bn { width: min(100%, 200px); align-self: start; }
 .bn .slot.other { opacity: .35; }
 .bn .slot.this { outline: 2px solid var(--blue); outline-offset: 1px; z-index: 1; }
 .bn .slot.this::after { content: ""; position: absolute; inset: 0; box-shadow: 0 0 0 9999px rgba(255, 255, 255, .35); }
 .list { display: grid; gap: 16px; }
-.order { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 22px; padding: 18px; background: var(--paper); border-radius: 10px; }
+.order { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 22px; padding: 18px; background: var(--paper); border-radius: 10px; }
 @media (max-width: 760px) { .order { grid-template-columns: 1fr; } }
 .order h3 { margin: 0 0 8px; font: 700 22px/1.05 var(--font); letter-spacing: -0.03em; overflow-wrap: anywhere; }
 .order dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; font-size: 14px; }
@@ -65,7 +68,7 @@ details[open] summary { margin-bottom: 14px; }
   </header>
   <section>
     <h2>The banner right now</h2>
-    <div class="bn" id="now"></div>
+    <div class="strip"><div class="bn" id="now"></div></div>
   </section>
   <section>
     <h2>Waiting for you <small id="n-paid"></small></h2>
@@ -92,17 +95,25 @@ let data = null;
 const money = (n) => (n == null ? "?" : Number(n).toLocaleString("en-US", { style: "currency", currency: (data.banner.currency || "usd").toUpperCase() }));
 const when = (iso) => (iso ? new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "");
 const imgFor = (id) => `/admin/api/orders/${encodeURIComponent(id)}/image`;
-const pos = (s) => {
-  const { cols, rows } = data.banner;
-  return `left:${(100 * s.x) / cols}%;top:${(100 * s.y) / rows}%;width:${(100 * s.width) / cols}%;height:${(100 * s.height) / rows}%`;
+// Which rows to show: all of them for the banner up top, or a few either side of an order's spot.
+const view = (order) => {
+  const { rows } = data.banner;
+  if (!order) return { top: 0, rows };
+  const n = Math.min(rows, order.spot.height + 12);
+  return { top: Math.max(0, Math.min(order.spot.y - 6, rows - n)), rows: n };
+};
+const pos = (s, v) => {
+  const { cols } = data.banner;
+  return `left:${(100 * s.x) / cols}%;top:${(100 * (s.y - v.top)) / v.rows}%;width:${(100 * s.width) / cols}%;height:${(100 * s.height) / v.rows}%`;
 };
 const adSpot = (a) => ({ x: a.x, y: a.y, width: a.w, height: a.h });
 
 // A little banner: what's up now, faded, with this order's ad in its spot.
 function banner(order) {
+  const v = view(order);
   const others = data.ads.filter((a) => !order || a.id !== order.id)
-    .map((a) => `<div class="slot ${order ? "other" : ""}" style="${pos(adSpot(a))}"><img src="${imgFor(a.id)}" alt="${esc(a.name)}" onerror="this.remove()"></div>`).join("");
-  const mine = order ? `<div class="slot this" style="${pos(order.spot)}"><img src="${imgFor(order.id)}" alt="Their ad"></div>` : "";
+    .map((a) => `<div class="slot ${order ? "other" : ""}" style="${pos(adSpot(a), v)}"><img src="${imgFor(a.id)}" alt="${esc(a.name)}" onerror="this.remove()"></div>`).join("");
+  const mine = order ? `<div class="slot this" style="${pos(order.spot, v)}"><img src="${imgFor(order.id)}" alt="Their ad"></div>` : "";
   return others + mine;
 }
 
@@ -121,7 +132,7 @@ function card(o) {
     live: `<button type="button" class="ghost bad" data-act="remove">Take it down</button>`
   }[o.status] || `<span class="tag">${esc(o.status)}${o.createdAt ? ` · started ${when(o.createdAt)}` : ""}</span>`;
   return `<article class="order" data-id="${esc(o.id)}">
-    <div class="bn" style="--cols:${data.banner.cols};--rows:${data.banner.rows}">${banner(o)}</div>
+    <div class="bn" style="--cols:${data.banner.cols};--rows:${view(o).rows}">${banner(o)}</div>
     <div>
       <h3>${esc(c.company || c.name)}</h3>
       <dl>${rows}</dl>
