@@ -1,6 +1,7 @@
 // Where orders and live ads are kept. Both stores below have the same shape.
 //   Orders: every checkout and its ad, with a status: unpaid → paid → live (or refunded, removed, expired).
 //   Ads: what's on the banner right now. The site reads them from banner/ads.json.
+//   Settings: small things the server has to remember across restarts, like the renewed Instagram token.
 //
 // memoryStore() is for tests and trying things locally. githubStore() is for real: Render's free plan forgets
 // everything whenever the server goes to sleep, so orders live in a private GitHub repo, and approved ads are
@@ -9,7 +10,7 @@
 const EXT_TYPES = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
 
 function memoryStore() {
-  const orders = new Map(), images = new Map(), adImages = new Map();
+  const orders = new Map(), images = new Map(), adImages = new Map(), settings = new Map();
   let ads = [];
   const copy = (o) => (o ? JSON.parse(JSON.stringify(o)) : null);
   return {
@@ -27,7 +28,9 @@ function memoryStore() {
     async listAds() { return ads.map(copy); },
     async publishAd(ad, image) { adImages.set(ad.id, image); ads = [...ads.filter((a) => a.id !== ad.id), copy(ad)]; return ad; },
     async removeAd(id) { ads = ads.filter((a) => a.id !== id); adImages.delete(id); },
-    adImages
+    async getSetting(name) { return copy(settings.get(name)); },
+    async putSetting(name, value) { settings.set(name, copy(value)); },
+    adImages, settings
   };
 }
 
@@ -138,6 +141,10 @@ function githubStore({ token, ordersRepo, siteRepo, ordersBranch = 'main', siteB
         return gone ? ads.filter((a) => a.id !== id) : undefined;
       }, `Banner: take down ${id}`);
       if (gone && gone.image) await remove(siteRepo, siteBranch, gone.image, `Banner: remove ${id}'s image`);
+    },
+    async getSetting(name) { return (await readJson(ordersRepo, ordersBranch, `settings/${name}.json`, null)).data; },
+    async putSetting(name, value) {
+      await editJson(ordersRepo, ordersBranch, `settings/${name}.json`, null, () => value, `Settings: ${name}`);
     }
   };
 }

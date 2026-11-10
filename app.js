@@ -66,7 +66,7 @@ const spotLabel = (s) => `${s.width} × ${s.height} square${s.blocks === 1 ? '' 
 const money = (n, currency) => `${Number(n).toFixed(2)} ${String(currency).toUpperCase()}`;
 const ADMIN_HTML = fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8');
 
-function createApp({ stripe, mailer, store, config, log = console }) {
+function createApp({ stripe, mailer, store, config, instagram = null, log = console }) {
   const app = express();
   // Render sits in front of the server, so the visitor's address comes from the X-Forwarded-For header.
   app.set('trust proxy', true);
@@ -263,6 +263,24 @@ function createApp({ stripe, mailer, store, config, log = console }) {
       log.error('Could not send the slop email:', err.message);
       res.status(502).json({ error: "That didn't send. Please try again in a bit." });
     }
+  });
+
+  /* ---------- jo's latest Instagram posts, for the Contact section ---------- */
+  site.get('/instagram', async (req, res) => {
+    if (!instagram) return res.status(404).json({ error: 'No Instagram feed is set up.' });
+    try {
+      const feed = await instagram.latest();
+      res.set('cache-control', 'public, max-age=300').json(feed);
+    } catch (err) {
+      log.error('Could not get the Instagram posts:', err.message);
+      res.status(502).json({ error: "Couldn't get the Instagram posts right now." });
+    }
+  });
+
+  site.get('/instagram/img/:id', (req, res) => {
+    const pic = instagram && instagram.picture(req.params.id);
+    if (!pic) return res.status(404).json({ error: 'No such picture.' });
+    res.set('cache-control', 'public, max-age=86400').type(pic.contentType).send(pic.content);
   });
 
   site.get('/health', (req, res) => {

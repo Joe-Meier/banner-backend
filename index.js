@@ -3,6 +3,7 @@ const Stripe = require('stripe');
 const { createApp, readConfig } = require('./app');
 const { memoryStore, githubStore } = require('./store');
 const { makeMailer } = require('./mailer');
+const { instagramFeed } = require('./instagram');
 
 const env = process.env;
 const config = readConfig(env);
@@ -25,8 +26,12 @@ if (!mailer) console.warn('No email set up (RESEND_API_KEY, or EMAIL_USER and EM
 if (env.RENDER && !env.RESEND_API_KEY && mailer) console.warn("Render's free plan blocks Gmail's SMTP ports, so sale emails won't send. Set RESEND_API_KEY.");
 if (mailer && !config.notifyEmail) console.warn('Set NOTIFY_EMAIL (or EMAIL_USER) so sale emails know where to go.');
 
+// jo's latest Instagram posts: a Behold JSON feed, or a token for Instagram's own API. Neither set means no feed.
+const instagram = instagramFeed({ feedUrl: env.INSTAGRAM_FEED_URL, token: env.INSTAGRAM_TOKEN, store });
+if (!instagram) console.warn('No Instagram feed (INSTAGRAM_FEED_URL or INSTAGRAM_TOKEN), so the site links to the profile instead.');
+
 const PORT = env.PORT || 3000;
-const app = createApp({ stripe, mailer, store, config });
+const app = createApp({ stripe, mailer, store, config, instagram });
 app.listen(PORT, () => {
   console.log(`🚀 Banner backend running on port ${PORT}. Orders: ${env.GITHUB_TOKEN ? ordersRepo : 'in memory'}. Price: ${config.pricePerBlock > 0 ? config.pricePerBlock : 'closed'}.`);
 });

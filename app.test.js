@@ -3,12 +3,13 @@ const assert = require('node:assert');
 const { createApp, readConfig } = require('./app');
 const { memoryStore, githubStore } = require('./store');
 const { resendMailer } = require('./mailer');
+const { instagramFeed } = require('./instagram');
 
 // A 1×1 PNG, as the site would send it.
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const quiet = { info() {}, warn() {}, error() {} };
 
-function setup(env = {}) {
+function setup(env = {}, extra = {}) {
   const created = [], sent = [], refunds = [], sessions = new Map();
   let n = 0;
   const stripe = {
@@ -32,7 +33,7 @@ function setup(env = {}) {
   const mailer = { sendMail: async (m) => { sent.push(m); } };
   const store = memoryStore();
   const config = readConfig({ PRICE_PER_BLOCK: '3', STRIPE_WEBHOOK_SECRET: 'whsec_x', EMAIL_USER: 'jo@example.com', ADMIN_PASSWORD: 'hunter2', PUBLIC_URL: 'https://banner.test', ...env });
-  const server = createApp({ stripe, mailer, store, config, log: quiet }).listen(0);
+  const server = createApp({ stripe, mailer, store, config, log: quiet, ...extra }).listen(0);
   const base = `http://127.0.0.1:${server.address().port}`;
   // What happens on Stripe's side when the buyer pays, without telling the server.
   const pay = (id) => Object.assign(sessions.get(id), { status: 'complete', payment_status: 'paid', amount_total: 4500, payment_intent: 'pi_456' });
@@ -293,4 +294,120 @@ test('slop submissions slow down after a few from the same visitor, and close wi
   const closed = await post(off.base, '/slop', { image: PNG });
   off.server.close();
   assert.equal(closed.status, 503);
+});
+
+/* ---------- Instagram ---------- */
+// A pretend internet: answers by URL, and remembers what was asked.
+function fakeFetch(routes) {
+  const asked = [];
+  const f = async (url) => {
+    asked.push(url);
+    for (const [match, answer] of routes) {
+      if (url.includes(match)) {
+        const { status = 200, body, type = 'application/json', bytes } = typeof answer === 'function' ? answer(url) : answer;
+        return {
+          ok: status < 400, status, headers: new Headers({ 'content-type': type }),
+          json: async () => body, text: async () => JSON.stringify(body), arrayBuffer: async () => new Uint8Array(bytes || []).buffer
+        };
+      }
+    }
+    return { ok: false, status: 404, json: async () => ({}), text: async () => 'not found' };
+  };
+  return { f, asked };
+}
+
+const beholdPost = (n, extra = {}) => ({
+  id: String(n), permalink: `https://www.instagram.com/p/post${n}/`, mediaType: 'IMAGE', timestamp: `2026-11-0${n}T12:00:00+0000`,
+  mediaUrl: `https://cdn.behold.test/${n}-full.jpg`, sizes: { medium: { mediaUrl: `https://cdn.behold.test/${n}-medium.jpg`, width: 700, height: 875 } },
+  caption: `Post ${n}`, prunedCaption: `Post ${n}`, ...extra
+});
+
+test('the Instagram section gets the latest three posts from a Behold feed, and the server only asks every half hour', async () => {
+  let clock = Date.parse('2026-11-10T12:00:00Z');
+  const { f, asked } = fakeFetch([['feeds.behold.test', { body: { username: 'brunch666', posts: [
+    beholdPost(5, { mediaType: 'VIDEO', sizes: undefined, thumbnailUrl: 'https://cdn.behold.test/5-still.jpg' }),
+    beholdPost(4, { permalink: 'javascript:alert(1)' }),
+    beholdPost(3), beholdPost(2), beholdPost(1)
+  ] } }]]);
+  const instagram = instagramFeed({ feedUrl: 'https://feeds.behold.test/abc', fetch: f, log: quiet, now: () => clock });
+  const t = setup({}, { instagram });
+  try {
+    const res = await fetch(t.base + '/instagram', { headers: { origin: 'https://joemeier.cool' } });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.headers.get('access-control-allow-origin'), 'https://joemeier.cool');
+    const feed = await res.json();
+    assert.strictEqual(feed.username, 'brunch666');
+    assert.deepStrictEqual(feed.posts.map((p) => [p.url, p.image, p.type]), [
+      ['https://www.instagram.com/p/post5/', 'https://cdn.behold.test/5-still.jpg', 'video'],
+      ['https://www.instagram.com/p/post3/', 'https://cdn.behold.test/3-medium.jpg', 'image'],
+      ['https://www.instagram.com/p/post2/', 'https://cdn.behold.test/2-medium.jpg', 'image']
+    ]);
+    await fetch(t.base + '/instagram');
+    assert.strictEqual(asked.length, 1, 'a second visitor gets the saved feed');
+    clock += 31 * 60 * 1000;
+    await fetch(t.base + '/instagram');
+    assert.strictEqual(asked.length, 2, 'half an hour later it asks again');
+  } finally { t.server.close(); }
+});
+
+test('with a token for Instagram\'s own API, the server renews it weekly and keeps the new one', async () => {
+  let clock = Date.parse('2026-11-10T12:00:00Z');
+  const store = memoryStore();
+  const media = () => ({ body: { data: [
+    { id: '1', media_type: 'CAROUSEL_ALBUM', media_url: 'https://scontent.test/1.jpg', permalink: 'https://www.instagram.com/p/one/', timestamp: '2026-11-09T10:00:00+0000', caption: 'one' },
+    { id: '2', media_type: 'VIDEO', media_url: 'https://scontent.test/2.mp4', thumbnail_url: 'https://scontent.test/2.jpg', permalink: 'https://www.instagram.com/reel/two/', timestamp: '2026-11-08T10:00:00+0000' },
+    { id: '3', media_type: 'VIDEO', permalink: 'https://www.instagram.com/reel/three/', timestamp: '2026-11-07T10:00:00+0000' }, // licensed music: no picture
+    { id: '4', media_type: 'IMAGE', media_url: 'https://scontent.test/4.jpg', permalink: 'https://www.instagram.com/p/four/', timestamp: '2026-11-06T10:00:00+0000' }
+  ] } });
+  const { f, asked } = fakeFetch([
+    ['refresh_access_token', { body: { access_token: 'IGtoken-2', token_type: 'bearer', expires_in: 5184000 } }],
+    ['/me/media', media],
+    ['scontent.test/4.jpg', { status: 403, body: {} }],
+    ['scontent.test/', (url) => ({ type: 'image/jpeg', bytes: [0xff, 0xd8, url.length] })]
+  ]);
+  const feed = instagramFeed({ token: 'IGtoken-1', store, fetch: f, log: quiet, now: () => clock });
+  const first = await feed.latest();
+  // The server keeps its own copies of Instagram's pictures. One that won't download links to Instagram's copy.
+  assert.deepStrictEqual(first.posts.map((p) => [p.url, p.image, p.type]), [
+    ['https://www.instagram.com/p/one/', '/instagram/img/1', 'carousel'],
+    ['https://www.instagram.com/reel/two/', '/instagram/img/2', 'video'],
+    ['https://www.instagram.com/p/four/', 'https://scontent.test/4.jpg', 'image']
+  ]);
+  const t = setup({}, { instagram: feed });
+  try {
+    const pic = await fetch(t.base + '/instagram/img/2');
+    assert.strictEqual(pic.headers.get('content-type'), 'image/jpeg');
+    assert.deepStrictEqual([...new Uint8Array(await pic.arrayBuffer())], [0xff, 0xd8, 'https://scontent.test/2.jpg'.length]);
+    assert.strictEqual((await fetch(t.base + '/instagram/img/4')).status, 404);
+  } finally { t.server.close(); }
+  assert.match(asked[0], /^https:\/\/graph\.instagram\.com\/me\/media\?fields=[a-z_,]*permalink[a-z_,]*&limit=\d+&access_token=IGtoken-1$/);
+  await new Promise((r) => setImmediate(r));
+  assert.ok(asked.some((u) => u.includes('refresh_access_token') && u.includes('IGtoken-1')), 'it renews the token');
+  assert.strictEqual((await store.getSetting('instagram')).token, 'IGtoken-2', 'and keeps the new one');
+
+  // After a restart, the server picks up the renewed token...
+  const again = fakeFetch([['/me/media', media]]);
+  await instagramFeed({ token: 'IGtoken-1', store, fetch: again.f, log: quiet, now: () => clock }).latest();
+  assert.match(again.asked[0], /access_token=IGtoken-2$/);
+  // ...unless jo has pasted a different token into Render since.
+  const fresh = fakeFetch([['/me/media', media]]);
+  await instagramFeed({ token: 'IGtoken-new', store, fetch: fresh.f, log: quiet, now: () => clock }).latest();
+  assert.match(fresh.asked[0], /access_token=IGtoken-new$/);
+});
+
+test('if Instagram is down, visitors get the last posts the server had, and with none, an error the site can work with', async () => {
+  let clock = Date.parse('2026-11-10T12:00:00Z'), down = false;
+  const { f } = fakeFetch([['feeds.behold.test', () => (down ? { status: 500, body: {} } : { body: { posts: [beholdPost(1)] } })]]);
+  const feed = instagramFeed({ feedUrl: 'https://feeds.behold.test/abc', fetch: f, log: quiet, now: () => clock });
+  await feed.latest();
+  down = true; clock += 31 * 60 * 1000;
+  assert.strictEqual((await feed.latest()).posts.length, 1);
+
+  const broken = instagramFeed({ feedUrl: 'https://feeds.behold.test/abc', fetch: f, log: quiet, now: () => clock });
+  const t = setup({}, { instagram: broken });
+  const none = setup();
+  try {
+    assert.strictEqual((await fetch(t.base + '/instagram')).status, 502);
+    assert.strictEqual((await fetch(none.base + '/instagram')).status, 404, 'no feed set up');
+  } finally { t.server.close(); none.server.close(); }
 });

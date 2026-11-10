@@ -18,6 +18,7 @@ Orders and their images are kept in a private GitHub repo, because the server's 
 - `POST /webhook`: optional. If you'd rather Stripe told the server, add a webhook here for `checkout.session.completed` and `checkout.session.expired` and set `STRIPE_WEBHOOK_SECRET`.
 - `GET /config`: the live price per square, so the site shows the same number Stripe charges.
 - `POST /slop`: takes `{ image, blurb? }` from the site's Slop Submissions form and emails the photo (and the note, if there is one) to you, the same way sale emails go. A few per visitor every ten minutes and 40 an hour in all, so your inbox doesn't get flooded.
+- `GET /instagram`: your latest three Instagram posts for the site's Contact section, as `{ username, posts: [{ url, image, type, caption, date }] }`. The server fetches them at most every half hour, from whichever of `INSTAGRAM_FEED_URL` or `INSTAGRAM_TOKEN` is set (see below), and answers 404 when neither is. With a token, the server keeps copies of the pictures and serves them at `GET /instagram/img/<id>`, since Instagram's own picture links expire.
 - `GET /admin`: your approval page, behind a password.
 - `GET /health`
 
@@ -36,6 +37,8 @@ Orders and their images are kept in a private GitHub repo, because the server's 
 | `RESEND_API_KEY` | For sale emails on Render, whose free plan blocks Gmail's SMTP. Sign up free at resend.com with the address in `NOTIFY_EMAIL`/`EMAIL_USER` and make an API key. Emails come from `onboarding@resend.dev` unless you set `EMAIL_FROM` on a domain you've verified there. |
 | `EMAIL_USER`, `EMAIL_PASS` | A Gmail address and an [app password](https://myaccount.google.com/apppasswords) for it, used to email you each sale when `RESEND_API_KEY` isn't set, on hosts that allow SMTP. |
 | `NOTIFY_EMAIL` | Where sale emails go. Defaults to `EMAIL_USER`. |
+| `INSTAGRAM_FEED_URL` | Optional. A Behold JSON feed of your Instagram, for the posts on the site (see below). |
+| `INSTAGRAM_TOKEN` | Optional, instead of `INSTAGRAM_FEED_URL`. A token for Instagram's own API. The server renews it about once a week and keeps the renewed one in the orders repo (`settings/instagram.json`), since tokens only last 60 days. |
 | `BANNER_COLS`, `BANNER_ROWS`, `TERM_MONTHS`, `CURRENCY` | Optional. Default to 10, 250, 3 and `usd`, matching the site's strip down the right side. |
 
 ## Setting it up
@@ -50,6 +53,20 @@ Render's free plan sleeps after 15 minutes with no visitors and takes about a mi
 On Railway or Render, checkout stays closed until `STRIPE_SECRET_KEY` and `GITHUB_TOKEN` are set, so nobody can pay for an ad that would have nowhere to go.
 
 Approved ads don't depend on the server staying up: they're plain files in the site's repo.
+
+## Your Instagram posts on the site
+
+The Contact section shows your latest three posts. Until one of these is set up, it shows a link to your profile instead. Either way, your Instagram has to be a professional account first: in the app, Settings › Account type and tools › Switch to professional account › Creator. It's free and you can switch back.
+
+The easy way, with Behold (free: one feed, updated once a day):
+1. Sign up at https://behold.so and connect your Instagram.
+2. Make a feed and pick **JSON**. Copy its URL (it looks like `https://feeds.behold.so/...`).
+3. Add it on Render as `INSTAGRAM_FEED_URL`.
+
+Instagram's own way (updates within half an hour, nothing in between, more steps):
+1. At https://developers.facebook.com/apps, make an app and pick **Business** as the type.
+2. Add the **Instagram** product, open **API setup with Instagram business login**, and click **Generate token** next to your account.
+3. Add the token on Render as `INSTAGRAM_TOKEN`.
 
 ## Running it locally
 
