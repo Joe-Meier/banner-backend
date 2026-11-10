@@ -68,6 +68,8 @@ const ADMIN_HTML = fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8');
 
 function createApp({ stripe, mailer, store, config, log = console }) {
   const app = express();
+  // Render sits in front of the server, so the visitor's address comes from the X-Forwarded-For header.
+  app.set('trust proxy', true);
 
   async function notify(subject, text, attachments = []) {
     if (!mailer || !config.notifyEmail) { log.info(`[email skipped] ${subject}\n${text}`); return; }
@@ -223,6 +225,44 @@ function createApp({ stripe, mailer, store, config, log = console }) {
   // The site asks this for the live price, so the number on the page always matches what Stripe charges.
   site.get('/config', (req, res) => {
     res.json({ pricePerBlock: config.pricePerBlock > 0 ? config.pricePerBlock : null, currency: config.currency, cols: config.cols, rows: config.rows, termMonths: config.termMonths });
+  });
+
+  /* ---------- Slop submissions: a photo of slop spotted out in the world, emailed to jo ---------- */
+  // Anyone can send one, so it's kept small (one photo under 4 MB, a short note) and slowed down: a few per visitor,
+  // and a cap on the whole site so jo's inbox and the free email plan don't get flooded.
+  const slopSent = new Map(); // visitor -> times they sent one
+  let slopAll = [];
+  const SLOP_EACH = 5, SLOP_TOTAL = 40, SLOP_EACH_MS = 10 * 60 * 1000, SLOP_TOTAL_MS = 60 * 60 * 1000;
+  site.post('/slop', async (req, res) => {
+    const body = req.body || {};
+    // A field people can't see: bots fill it in, people don't. Tell the bot it worked.
+    if (body.website) return res.json({ sent: true });
+    const image = parseImage(body.image);
+    if (!image) return res.status(400).json({ error: 'Please add a photo (JPG, PNG, WebP or GIF, under 4 MB).' });
+    const blurb = clean(body.blurb, 1000);
+    if (!mailer || !config.notifyEmail) return res.status(503).json({ error: 'Submissions are closed right now. Please try again later.' });
+    const now = Date.now(), who = req.ip || 'someone';
+    const mine = (slopSent.get(who) || []).filter((t) => now - t < SLOP_EACH_MS);
+    slopAll = slopAll.filter((t) => now - t < SLOP_TOTAL_MS);
+    if (mine.length >= SLOP_EACH || slopAll.length >= SLOP_TOTAL) {
+      return res.status(429).json({ error: "That's a lot of slop. Give it a little while and try again." });
+    }
+    if (slopSent.size > 5000) slopSent.clear();
+    slopSent.set(who, [...mine, now]);
+    slopAll.push(now);
+    const id = crypto.randomBytes(4).toString('hex');
+    const first = blurb.split('\n')[0].slice(0, 60);
+    try {
+      await notify(`Slop submission${first ? `: ${first}` : ''}`, [
+        'Someone sent in a slop sighting from your site. The photo is attached.',
+        '',
+        blurb ? `What they wrote:\n${blurb}` : "They didn't write anything about it."
+      ].join('\n'), [{ filename: `slop-${id}.${image.ext}`, content: image.content, contentType: image.contentType }]);
+      res.json({ sent: true });
+    } catch (err) {
+      log.error('Could not send the slop email:', err.message);
+      res.status(502).json({ error: "That didn't send. Please try again in a bit." });
+    }
   });
 
   site.get('/health', (req, res) => {

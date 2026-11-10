@@ -261,3 +261,36 @@ test('checkout answers the site on joemeier.cool and on GitHub, and nobody else'
   t.server.close();
   assert.deepEqual([custom, www, github, other], ['https://joemeier.cool', 'https://www.joemeier.cool', 'https://joe-meier.github.io', null]);
 });
+
+test('slop submissions: the photo and the note get emailed to jo, and the note is optional', async () => {
+  const t = setup();
+  const withNote = await post(t.base, '/slop', { image: PNG, blurb: 'A deli on 2nd Ave.\nThe bacon has fingers.' });
+  const bare = await post(t.base, '/slop', { image: PNG });
+  const none = await post(t.base, '/slop', { blurb: 'no photo' });
+  const html = await post(t.base, '/slop', { image: 'data:text/html;base64,PGgxPg==' });
+  const bot = await post(t.base, '/slop', { image: PNG, website: 'spam.test' });
+  t.server.close();
+  assert.deepEqual([withNote.status, bare.status, none.status, html.status, bot.status], [200, 200, 400, 400, 200]);
+  assert.equal(t.sent.length, 2);
+  assert.equal(t.sent[0].to, 'jo@example.com');
+  assert.equal(t.sent[0].subject, 'Slop submission: A deli on 2nd Ave.');
+  assert.match(t.sent[0].text, /The bacon has fingers\./);
+  assert.match(t.sent[0].attachments[0].filename, /^slop-[0-9a-f]{8}\.png$/);
+  assert.equal(t.sent[1].subject, 'Slop submission');
+  assert.match(t.sent[1].text, /didn't write anything/);
+});
+
+test('slop submissions slow down after a few from the same visitor, and close without email', async () => {
+  const t = setup();
+  const from = (ip) => fetch(t.base + '/slop', { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip }, body: JSON.stringify({ image: PNG }) }).then((r) => r.status);
+  const first = [];
+  for (let i = 0; i < 6; i++) first.push(await from('203.0.113.7'));
+  const other = await from('198.51.100.2');
+  t.server.close();
+  assert.deepEqual(first, [200, 200, 200, 200, 200, 429]);
+  assert.equal(other, 200);
+  const off = setup({ EMAIL_USER: '' });
+  const closed = await post(off.base, '/slop', { image: PNG });
+  off.server.close();
+  assert.equal(closed.status, 503);
+});

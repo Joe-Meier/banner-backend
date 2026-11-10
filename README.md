@@ -1,6 +1,6 @@
 # banner-backend
 
-Takes payments for ad space on the banner at the top of joe-meier.github.io/Joecool, and gives you a private page to approve each ad before it goes up.
+Takes payments for ad space on the banner down the side of joemeier.cool, and gives you a private page to approve each ad before it goes up.
 
 How it works:
 
@@ -17,6 +17,7 @@ Orders and their images are kept in a private GitHub repo, because the server's 
 - `POST /confirm`: takes `{ sessionId }`. The site calls it when a buyer comes back from Stripe; the server checks that checkout with Stripe.
 - `POST /webhook`: optional. If you'd rather Stripe told the server, add a webhook here for `checkout.session.completed` and `checkout.session.expired` and set `STRIPE_WEBHOOK_SECRET`.
 - `GET /config`: the live price per square, so the site shows the same number Stripe charges.
+- `POST /slop`: takes `{ image, blurb? }` from the site's Slop Submissions form and emails the photo (and the note, if there is one) to you, the same way sale emails go. A few per visitor every ten minutes and 40 an hour in all, so your inbox doesn't get flooded.
 - `GET /admin`: your approval page, behind a password.
 - `GET /health`
 
