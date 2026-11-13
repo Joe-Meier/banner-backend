@@ -31,6 +31,17 @@ const IMAGE_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'we
 const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const isInt = (v) => Number.isInteger(v);
 const clean = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+// A LinkedIn link as people type it ("linkedin.com/in/you", "www.linkedin.com/in/you/", the full https:// link)
+// becomes a full link. Anything else is kept as plain text, cut short, so jo can still see what they wrote.
+function linkedinLink(v) {
+  const raw = clean(v, 300).replace(/\s+/g, '');
+  if (!raw) return '';
+  try {
+    const u = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    if (/(^|\.)linkedin\.com$/i.test(u.hostname)) return `https://www.linkedin.com${u.pathname.replace(/\/+$/, '')}`;
+  } catch {}
+  return clean(v, 120);
+}
 const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 const adSpot = (ad) => ({ x: ad.x, y: ad.y, width: ad.w, height: ad.h });
 
@@ -240,6 +251,9 @@ function createApp({ stripe, mailer, store, config, instagram = null, log = cons
     const image = parseImage(body.image);
     if (!image) return res.status(400).json({ error: 'Please add a photo (JPG, PNG, WebP or GIF, under 4 MB).' });
     const blurb = clean(body.blurb, 1000);
+    // Optional, so jo can credit them if it gets posted.
+    const name = clean(body.name, 100).replace(/\s+/g, ' ');
+    const linkedin = linkedinLink(body.linkedin);
     if (!mailer || !config.notifyEmail) return res.status(503).json({ error: 'Submissions are closed right now. Please try again later.' });
     const now = Date.now(), who = req.ip || 'someone';
     const mine = (slopSent.get(who) || []).filter((t) => now - t < SLOP_EACH_MS);
@@ -252,11 +266,14 @@ function createApp({ stripe, mailer, store, config, instagram = null, log = cons
     slopAll.push(now);
     const id = crypto.randomBytes(4).toString('hex');
     const first = blurb.split('\n')[0].slice(0, 60);
+    const credit = [name, linkedin].filter(Boolean).join(', ');
     try {
-      await notify(`Slop submission${first ? `: ${first}` : ''}`, [
-        'Someone sent in a slop sighting from your site. The photo is attached.',
+      await notify(`Slop submission${name ? ` from ${name}` : ''}${first ? `: ${first}` : ''}`, [
+        `${name || 'Someone'} sent in a slop sighting from your site. The photo is attached.`,
         '',
-        blurb ? `What they wrote:\n${blurb}` : "They didn't write anything about it."
+        blurb ? `What they wrote:\n${blurb}` : "They didn't write anything about it.",
+        '',
+        credit ? `Credit them as: ${credit}` : "They didn't leave a name or LinkedIn."
       ].join('\n'), [{ filename: `slop-${id}.${image.ext}`, content: image.content, contentType: image.contentType }]);
       res.json({ sent: true });
     } catch (err) {

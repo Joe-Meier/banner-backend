@@ -17,7 +17,7 @@ Orders and their images are kept in a private GitHub repo, because the server's 
 - `POST /confirm`: takes `{ sessionId }`. The site calls it when a buyer comes back from Stripe; the server checks that checkout with Stripe.
 - `POST /webhook`: optional. If you'd rather Stripe told the server, add a webhook here for `checkout.session.completed` and `checkout.session.expired` and set `STRIPE_WEBHOOK_SECRET`.
 - `GET /config`: the live price per square, so the site shows the same number Stripe charges.
-- `POST /slop`: takes `{ image, blurb? }` from the site's Slop Submissions form and emails the photo (and the note, if there is one) to you, the same way sale emails go. A few per visitor every ten minutes and 40 an hour in all, so your inbox doesn't get flooded.
+- `POST /slop`: takes `{ image, blurb?, name?, linkedin? }` from the site's Slop Submissions form and emails the photo to you, the same way sale emails go, with the note and who to credit if they filled those in. A few per visitor every ten minutes and 40 an hour in all, so your inbox doesn't get flooded.
 - `GET /instagram`: your latest three Instagram posts for the site's Contact section, as `{ username, posts: [{ url, image, type, caption, date }] }`. The server fetches them at most every half hour, from whichever of `INSTAGRAM_FEED_URL` or `INSTAGRAM_TOKEN` is set (see below), and answers 404 when neither is. With a token, the server keeps copies of the pictures and serves them at `GET /instagram/img/<id>`, since Instagram's own picture links expire.
 - `GET /admin`: your approval page, behind a password.
 - `GET /health`

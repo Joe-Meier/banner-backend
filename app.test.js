@@ -279,6 +279,21 @@ test('slop submissions: the photo and the note get emailed to jo, and the note i
   assert.match(t.sent[0].attachments[0].filename, /^slop-[0-9a-f]{8}\.png$/);
   assert.equal(t.sent[1].subject, 'Slop submission');
   assert.match(t.sent[1].text, /didn't write anything/);
+  assert.match(t.sent[1].text, /didn't leave a name or LinkedIn/);
+});
+
+test('slop submissions can say who sent it, so jo can credit them', async () => {
+  const t = setup();
+  const full = await post(t.base, '/slop', { image: PNG, blurb: 'Bus stop on Canal.', name: '  Pat   Lee ', linkedin: 'linkedin.com/in/patlee/?utm_source=share' });
+  const odd = await post(t.base, '/slop', { image: PNG, linkedin: 'just ask for Pat' });
+  const sneaky = await post(t.base, '/slop', { image: PNG, name: 'Pat', linkedin: 'https://linkedin.com.evil.test/in/pat' });
+  t.server.close();
+  assert.deepEqual([full.status, odd.status, sneaky.status], [200, 200, 200]);
+  assert.equal(t.sent[0].subject, 'Slop submission from Pat Lee: Bus stop on Canal.');
+  assert.match(t.sent[0].text, /^Pat Lee sent in a slop sighting/);
+  assert.match(t.sent[0].text, /Credit them as: Pat Lee, https:\/\/www\.linkedin\.com\/in\/patlee$/m);
+  assert.match(t.sent[1].text, /Credit them as: just ask for Pat$/m);
+  assert.match(t.sent[2].text, /Credit them as: Pat, https:\/\/linkedin\.com\.evil\.test\/in\/pat$/m, 'not turned into a LinkedIn link, just passed on as text');
 });
 
 test('slop submissions slow down after a few from the same visitor, and close without email', async () => {
