@@ -163,3 +163,10 @@ test('the Printful client sends the token and store, and reads errors', async ()
   assert.equal(calls[0].init.headers.authorization, 'Bearer tok');
   assert.equal(calls[0].init.headers['x-pf-store-id'], '42');
 });
+
+test('a secret key in STRIPE_PUBLISHABLE_KEY is never sent to browsers', async (t) => {
+  const s = setup({ STRIPE_PUBLISHABLE_KEY: 'sk_test_oops' }); t.after(() => s.server.close());
+  const body = await (await fetch(s.base + '/merch')).text();
+  assert.doesNotMatch(body, /sk_test_oops/);
+  assert.deepEqual(JSON.parse(body), { open: false, products: [] });
+});

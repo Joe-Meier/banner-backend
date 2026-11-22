@@ -38,7 +38,7 @@ const merch = merchRoutes({
   printful: merchConfig.token ? printfulClient({ token: merchConfig.token, storeId: merchConfig.storeId }) : null
 });
 if (!merchConfig.token) console.warn('PRINTFUL_API_TOKEN is not set, so the merch shop is closed.');
-else if (!merchConfig.publishableKey) console.warn('STRIPE_PUBLISHABLE_KEY is not set, so the merch shop is closed.');
+else if (!merchConfig.publishableKey) console.warn(env.STRIPE_PUBLISHABLE_KEY ? "STRIPE_PUBLISHABLE_KEY isn't a publishable key (it should start with pk_), so the merch shop is closed." : 'STRIPE_PUBLISHABLE_KEY is not set, so the merch shop is closed.');
 else console.log(`Merch shop open. Printful orders are ${merchConfig.confirm ? 'confirmed straight away' : 'left as drafts'}.`);
 
 const PORT = env.PORT || 3000;

@@ -15,7 +15,8 @@ function readMerchConfig(env) {
   return {
     token: env.PRINTFUL_API_TOKEN || '',
     storeId: env.PRINTFUL_STORE_ID || '', // only for a token that covers every store on the account
-    publishableKey: env.STRIPE_PUBLISHABLE_KEY || '',
+    // Only a pk_ key is ever sent to browsers. A secret key pasted here by mistake is never served, and the shop stays closed.
+    publishableKey: /^pk_(test|live)_/.test(env.STRIPE_PUBLISHABLE_KEY || '') ? env.STRIPE_PUBLISHABLE_KEY : '',
     shipping: Number.isFinite(shipping) && shipping >= 0 ? shipping : 6, // one flat rate, in dollars
     countries: (env.MERCH_COUNTRIES || 'US').split(',').map((c) => c.trim().toUpperCase()).filter((c) => /^[A-Z]{2}$/.test(c)),
     // Test payments make draft orders in Printful (nothing gets printed or charged). Live payments are confirmed
