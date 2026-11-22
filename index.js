@@ -4,6 +4,7 @@ const { createApp, readConfig } = require('./app');
 const { memoryStore, githubStore } = require('./store');
 const { makeMailer } = require('./mailer');
 const { instagramFeed } = require('./instagram');
+const { merchRoutes, printfulClient, readMerchConfig } = require('./merch');
 
 const env = process.env;
 const config = readConfig(env);
@@ -30,8 +31,18 @@ if (mailer && !config.notifyEmail) console.warn('Set NOTIFY_EMAIL (or EMAIL_USER
 const instagram = instagramFeed({ feedUrl: env.INSTAGRAM_FEED_URL, token: env.INSTAGRAM_TOKEN, store });
 if (!instagram) console.warn('No Instagram feed (INSTAGRAM_FEED_URL or INSTAGRAM_TOKEN), so the site links to the profile instead.');
 
+// Merch: Printful products sold with Stripe's embedded checkout. Needs PRINTFUL_API_TOKEN and STRIPE_PUBLISHABLE_KEY.
+const merchConfig = readMerchConfig(env);
+const merch = merchRoutes({
+  stripe, merchConfig, stripeReady: Boolean(env.STRIPE_SECRET_KEY),
+  printful: merchConfig.token ? printfulClient({ token: merchConfig.token, storeId: merchConfig.storeId }) : null
+});
+if (!merchConfig.token) console.warn('PRINTFUL_API_TOKEN is not set, so the merch shop is closed.');
+else if (!merchConfig.publishableKey) console.warn('STRIPE_PUBLISHABLE_KEY is not set, so the merch shop is closed.');
+else console.log(`Merch shop open. Printful orders are ${merchConfig.confirm ? 'confirmed straight away' : 'left as drafts'}.`);
+
 const PORT = env.PORT || 3000;
-const app = createApp({ stripe, mailer, store, config, instagram });
+const app = createApp({ stripe, mailer, store, config, instagram, merch });
 app.listen(PORT, () => {
   console.log(`🚀 Banner backend running on port ${PORT}. Orders: ${env.GITHUB_TOKEN ? ordersRepo : 'in memory'}. Price: ${config.pricePerBlock > 0 ? config.pricePerBlock : 'closed'}.`);
 });

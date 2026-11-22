@@ -20,3 +20,7 @@ services:
         sync: false
       - key: EMAIL_PASS
         sync: false
+      - key: PRINTFUL_API_TOKEN
+        sync: false
+      - key: STRIPE_PUBLISHABLE_KEY
+        sync: false

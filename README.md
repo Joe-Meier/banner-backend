@@ -19,6 +19,9 @@ Orders and their images are kept in a private GitHub repo, because the server's 
 - `GET /config`: the live price per square, so the site shows the same number Stripe charges.
 - `POST /slop`: takes `{ image, blurb?, name?, linkedin? }` from the site's Slop Submissions form and emails the photo to you, the same way sale emails go, with the note and who to credit if they filled those in. A few per visitor every ten minutes and 40 an hour in all, so your inbox doesn't get flooded.
 - `GET /instagram`: your latest three Instagram posts for the site's Contact section, as `{ username, posts: [{ url, image, type, caption, date }] }`. The server fetches them at most every half hour, from whichever of `INSTAGRAM_FEED_URL` or `INSTAGRAM_TOKEN` is set (see below), and answers 404 when neither is. With a token, the server keeps copies of the pictures and serves them at `GET /instagram/img/<id>`, since Instagram's own picture links expire.
+- `GET /merch`: the merch for the site's Merch section, straight from your Printful store: `{ open, publishableKey, shipping, countries, products: [{ id, name, image, variants: [{ id, name, price, image, soldOut }] }] }`. Printful is asked at most every ten minutes. `open` is false until `PRINTFUL_API_TOKEN` and `STRIPE_PUBLISHABLE_KEY` are set.
+- `POST /merch/checkout`: takes `{ variant, quantity }` and returns a `clientSecret` for Stripe's embedded checkout, which the site shows inside the Merch section. The price comes from Printful, never the browser.
+- `POST /merch/confirm`: takes `{ sessionId }` when the buyer finishes paying. The server sends the order to Printful and emails you.
 - `GET /admin`: your approval page, behind a password.
 - `GET /health`
 
@@ -39,6 +42,12 @@ Orders and their images are kept in a private GitHub repo, because the server's 
 | `NOTIFY_EMAIL` | Where sale emails go. Defaults to `EMAIL_USER`. |
 | `INSTAGRAM_FEED_URL` | Optional. A Behold JSON feed of your Instagram, for the posts on the site (see below). |
 | `INSTAGRAM_TOKEN` | Optional, instead of `INSTAGRAM_FEED_URL`. A token for Instagram's own API. The server renews it about once a week and keeps the renewed one in the orders repo (`settings/instagram.json`), since tokens only last 60 days. |
+| `PRINTFUL_API_TOKEN` | A private token from developers.printful.com for your merch store, with access to orders and store products. Turns the merch shop on. |
+| `STRIPE_PUBLISHABLE_KEY` | From Stripe › Developers › API keys (`pk_test_...` or `pk_live_...`, matching the secret key). The site needs it to show Stripe's checkout. |
+| `MERCH_SHIPPING` | Optional. One flat shipping price in dollars for merch. Defaults to `6`. |
+| `MERCH_COUNTRIES` | Optional. Where merch ships, as two-letter codes, comma-separated. Defaults to `US`. |
+| `PRINTFUL_CONFIRM` | Optional. With test keys, Printful orders are always drafts, so nothing gets printed. With live keys they're confirmed straight away. Set `0` to keep every order a draft you confirm in Printful yourself. |
+| `PRINTFUL_STORE_ID` | Optional. Only if your Printful token covers every store on the account. |
 | `BANNER_COLS`, `BANNER_ROWS`, `TERM_MONTHS`, `CURRENCY` | Optional. Default to 10, 250, 3 and `usd`, matching the site's strip down the right side. |
 
 ## Setting it up
@@ -53,6 +62,16 @@ Render's free plan sleeps after 15 minutes with no visitors and takes about a mi
 On Railway or Render, checkout stays closed until `STRIPE_SECRET_KEY` and `GITHUB_TOKEN` are set, so nobody can pay for an ad that would have nowhere to go.
 
 Approved ads don't depend on the server staying up: they're plain files in the site's repo.
+
+## Merch
+
+The site's Merch section sells what's in your Printful store, with Stripe's checkout right in the page, so nobody leaves joemeier.cool.
+
+1. In Printful, make the products in your API store and set each one's retail price. That's the price on the site.
+2. Add `PRINTFUL_API_TOKEN` and `STRIPE_PUBLISHABLE_KEY` on Render.
+3. A buyer picks a size and pays. The server sends the order to Printful (a draft while you're on test keys) and emails you. If Printful turns it away, you get an email saying why, and the server tries again every couple of minutes for two days.
+
+Nothing about merch is kept on the server: Printful has the products, Stripe has the payments, and each Printful order is tied to its Stripe checkout, so it can't be ordered twice.
 
 ## Your Instagram posts on the site
 

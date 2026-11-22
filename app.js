@@ -77,7 +77,7 @@ const spotLabel = (s) => `${s.width} × ${s.height} square${s.blocks === 1 ? '' 
 const money = (n, currency) => `${Number(n).toFixed(2)} ${String(currency).toUpperCase()}`;
 const ADMIN_HTML = fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8');
 
-function createApp({ stripe, mailer, store, config, instagram = null, log = console }) {
+function createApp({ stripe, mailer, store, config, instagram = null, merch = null, log = console }) {
   const app = express();
   // Render sits in front of the server, so the visitor's address comes from the X-Forwarded-For header.
   app.set('trust proxy', true);
@@ -126,6 +126,7 @@ function createApp({ stripe, mailer, store, config, instagram = null, log = cons
     }
   }
   async function settle(session) {
+    if (merch && session.metadata && session.metadata.kind === 'merch') return merch.fulfil(session);
     const id = session.metadata && session.metadata.order_id;
     if (!id) return;
     if (session.payment_status === 'paid') return markPaid(id, session);
@@ -146,6 +147,7 @@ function createApp({ stripe, mailer, store, config, instagram = null, log = cons
       for (const o of open) {
         try { await settle(await stripe.checkout.sessions.retrieve(o.sessionId)); } catch (err) { log.warn(`Couldn't check checkout ${o.sessionId}:`, err.message); }
       }
+      if (merch) await merch.sync().catch((err) => log.warn('Merch check failed:', err.message));
     })().catch((err) => log.error('Payment check failed:', err.message)).finally(() => { syncing = null; });
     return syncing;
   }
@@ -237,6 +239,9 @@ function createApp({ stripe, mailer, store, config, instagram = null, log = cons
   site.get('/config', (req, res) => {
     res.json({ pricePerBlock: config.pricePerBlock > 0 ? config.pricePerBlock : null, currency: config.currency, cols: config.cols, rows: config.rows, termMonths: config.termMonths });
   });
+
+  /* ---------- Merch: Printful products, paid for with Stripe's embedded checkout (see merch.js) ---------- */
+  if (merch) site.use(merch.router(notify));
 
   /* ---------- Slop submissions: a photo of slop spotted out in the world, emailed to jo ---------- */
   // Anyone can send one, so it's kept small (one photo under 4 MB, a short note) and slowed down: a few per visitor,
